@@ -327,10 +327,10 @@ class ComplianceCheckerWindow(QMainWindow):
         mode = "авто + ручные" if self.include_manual_checks else "только авто"
         self._log(f"Режим: {mode}")
         self._log("=" * 50)
-        
-        engine = ComplianceEngine(security_level=self.security_level)
+
+        engine = ComplianceEngine(security_level=self.security_level, include_manual=self.include_manual_checks)
         checkers = engine.get_active_checkers()
-        self._log(f"Автоматических проверок: {len(checkers)}")
+        self._log(f"Всего проверок: {len(checkers)}")
         
         if self.include_manual_checks:
             self._log("Ручные проверки (опросник) будут отображены после завершения автоматических")

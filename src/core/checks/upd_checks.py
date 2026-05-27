@@ -32,7 +32,6 @@ def get_local_users():
         return []
 
 def get_admin_users():
-    """Получить список пользователей в группе администраторов"""
     try:
         result = subprocess.run(
             ['net', 'localgroup', 'Администраторы'],
@@ -50,12 +49,13 @@ def get_admin_users():
 
 
 # ============================================================================
-# УПД.1: Управление учетными записями пользователей
+# АВТОМАТИЧЕСКИЕ ПРОВЕРКИ
 # ============================================================================
 
+# УПД.1 — АВТОМАТИЧЕСКАЯ
 class UPD1Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.1", "Управление учетными записями пользователей", "high")
+        super().__init__("УПД.1", "Управление учетными записями пользователей", "high", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
@@ -72,18 +72,13 @@ class UPD1Checker(BaseChecker):
         return self._get_result(True, users, f"Учётных записей: {len(users)}, гостевая отключена")
 
 
-# ============================================================================
-# УПД.2: Реализация методов разграничения доступа
-# ============================================================================
-
+# УПД.2 — АВТОМАТИЧЕСКАЯ
 class UPD2Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.2", "Методы разграничения доступа", "high")
+        super().__init__("УПД.2", "Методы разграничения доступа", "high", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем, настроены ли права на общие папки
-        # Базовая проверка: существуют ли общие папки
         try:
             result = subprocess.run(['net', 'share'], capture_output=True, text=True, encoding='cp866', errors='replace')
             shares = []
@@ -99,17 +94,13 @@ class UPD2Checker(BaseChecker):
             return self._get_result(False, str(e), f"Ошибка проверки: {e}")
 
 
-# ============================================================================
-# УПД.3: Управление информационными потоками (файрвол)
-# ============================================================================
-
+# УПД.3 — АВТОМАТИЧЕСКАЯ
 class UPD3Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.3", "Управление информационными потоками", "high")
+        super().__init__("УПД.3", "Управление информационными потоками", "high", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем, включён ли файрвол
         try:
             result = subprocess.run(
                 ['netsh', 'advfirewall', 'show', 'allprofiles'],
@@ -123,13 +114,10 @@ class UPD3Checker(BaseChecker):
             return self._get_result(False, "Ошибка", "Не удалось проверить статус файрвола")
 
 
-# ============================================================================
-# УПД.4: Разделение полномочий (ролей) пользователей
-# ============================================================================
-
+# УПД.4 — АВТОМАТИЧЕСКАЯ
 class UPD4Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.4", "Разделение полномочий (ролей)", "critical")
+        super().__init__("УПД.4", "Разделение полномочий (ролей)", "critical", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
@@ -145,17 +133,13 @@ class UPD4Checker(BaseChecker):
             return self._get_result(True, "OK", "Администраторы отсутствуют")
 
 
-# ============================================================================
-# УПД.5: Назначение минимально необходимых прав
-# ============================================================================
-
+# УПД.5 — АВТОМАТИЧЕСКАЯ
 class UPD5Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.5", "Минимально необходимые права", "critical")
+        super().__init__("УПД.5", "Минимально необходимые права", "critical", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем, не является ли текущий пользователь администратором
         try:
             is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
             if is_admin:
@@ -167,17 +151,13 @@ class UPD5Checker(BaseChecker):
             return self._get_result(False, "Ошибка", "Не удалось проверить права пользователя")
 
 
-# ============================================================================
-# УПД.6: Ограничение неуспешных попыток входа
-# ============================================================================
-
+# УПД.6 — АВТОМАТИЧЕСКАЯ
 class UPD6Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.6", "Ограничение неуспешных попыток входа", "critical")
+        super().__init__("УПД.6", "Ограничение неуспешных попыток входа", "critical", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем политику блокировки
         try:
             result = subprocess.run(['net', 'accounts'], capture_output=True, text=True, encoding='cp866', errors='replace')
             threshold = None
@@ -208,31 +188,20 @@ class UPD6Checker(BaseChecker):
             return self._get_result(False, str(e), f"Ошибка проверки: {e}")
 
 
-# ============================================================================
-# УПД.10: Блокирование сеанса при бездействии
-# ============================================================================
-
+# УПД.10 — АВТОМАТИЧЕСКАЯ
 class UPD10Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.10", "Блокировка при бездействии", "high")
-        self.required_levels = [2, 3, 4]  # для УЗ-2,3,4
+        super().__init__("УПД.10", "Блокировка при бездействии", "high", is_manual=False)
+        self.required_levels = [2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем таймаут блокировки экрана
         try:
-            # Проверяем, включена ли заставка и таймаут
-            result = subprocess.run(
-                ['powercfg', '/GETACTIVESCHEME'],
-                capture_output=True, text=True, encoding='cp866', errors='replace'
-            )
-            
-            # Проверяем таймаут через реестр
             timeout = get_registry_value(
                 r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System",
                 "InactivityTimeoutSecs"
             )
             
-            if timeout and timeout <= 900:  # 15 минут = 900 секунд
+            if timeout and timeout <= 900:
                 return self._get_result(True, f"{timeout} сек", f"Блокировка через {timeout//60} минут")
             elif timeout:
                 return self._get_result(False, f"{timeout} сек", f"Таймаут {timeout//60} мин (рекомендуется ≤15)")
@@ -243,17 +212,13 @@ class UPD10Checker(BaseChecker):
             return self._get_result(False, "Ошибка", "Не удалось проверить настройки блокировки")
 
 
-# ============================================================================
-# УПД.13: Защищенный удаленный доступ
-# ============================================================================
-
+# УПД.13 — АВТОМАТИЧЕСКАЯ
 class UPD13Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.13", "Защищенный удаленный доступ", "high")
+        super().__init__("УПД.13", "Защищенный удаленный доступ", "high", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем, используется ли RDP и включено ли сетевое обнаружение
         try:
             result = subprocess.run(
                 ['reg', 'query', 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Terminal Server', '/v', 'fDenyTSConnections'],
@@ -269,17 +234,13 @@ class UPD13Checker(BaseChecker):
             return self._get_result(True, "OK", "Не удалось проверить RDP, но рекомендуется использовать VPN")
 
 
-# ============================================================================
-# УПД.14: Контроль беспроводного доступа (Wi-Fi)
-# ============================================================================
-
+# УПД.14 — АВТОМАТИЧЕСКАЯ
 class UPD14Checker(BaseChecker):
     def __init__(self):
-        super().__init__("УПД.14", "Контроль беспроводного доступа", "medium")
+        super().__init__("УПД.14", "Контроль беспроводного доступа", "medium", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
     
     def check(self) -> dict:
-        # Проверяем, включён ли Wi-Fi и стандарт защиты
         try:
             result = subprocess.run(
                 ['netsh', 'wlan', 'show', 'interfaces'],
@@ -289,7 +250,6 @@ class UPD14Checker(BaseChecker):
             if 'Нет беспроводного интерфейса' in result.stdout or 'There is no wireless interface' in result.stdout:
                 return self._get_result(True, "Wi-Fi отключён", "Беспроводные интерфейсы не обнаружены")
             else:
-                # Проверяем стандарт защиты
                 if 'WPA2' in result.stdout or 'WPA3' in result.stdout:
                     return self._get_result(True, "Wi-Fi с WPA2/WPA3", "Беспроводная сеть защищена")
                 elif 'WEP' in result.stdout:
@@ -301,12 +261,105 @@ class UPD14Checker(BaseChecker):
 
 
 # ============================================================================
-# ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ВСЕХ ПРОВЕРОК УПД
+# РУЧНЫЕ ПРОВЕРКИ
+# ============================================================================
+
+# УПД.7 — РУЧНАЯ
+class UPD7Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.7", "Предупреждение пользователя при входе", "medium", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]
+        self.question = "Отображается ли баннер с предупреждением при входе в систему?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.8 — РУЧНАЯ
+class UPD8Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.8", "Оповещение о предыдущем входе", "medium", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]
+        self.question = "Показывается ли сообщение о последнем успешном входе в систему?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.9 — РУЧНАЯ
+class UPD9Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.9", "Ограничение числа параллельных сеансов", "medium", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]
+        self.question = "Ограничено ли количество одновременных сеансов для каждого пользователя?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.11 — РУЧНАЯ
+class UPD11Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.11", "Действия до аутентификации", "low", is_manual=True)
+        self.required_levels = [2, 3, 4]
+        self.question = "Разрешены ли какие-либо действия до входа в систему (гостевой доступ и т.п.)?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.12 — РУЧНАЯ
+class UPD12Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.12", "Поддержка атрибутов безопасности", "low", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]
+        self.question = "Используются ли мандатные метки безопасности (только для спецОС)?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.15 — РУЧНАЯ
+class UPD15Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.15", "Контроль мобильных устройств", "medium", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]
+        self.question = "Контролируется ли использование мобильных устройств (MDM/MAM)?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.16 — РУЧНАЯ
+class UPD16Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.16", "Взаимодействие с внешними системами", "medium", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]
+        self.question = "Контролируется ли взаимодействие с внешними информационными системами?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# УПД.17 — РУЧНАЯ
+class UPD17Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("УПД.17", "Доверенная загрузка", "high", is_manual=True)
+        self.required_levels = [1, 2, 3, 4]  # ← ИСПРАВЛЕНО
+        self.question = "Включена ли доверенная загрузка (Secure Boot, TPM)?"
+
+    def check(self) -> dict:
+        return self._get_result(False, None, self.question)
+
+
+# ============================================================================
+# ФУНКЦИЯ ДЛЯ ПОЛУЧЕНИЯ ВСЕХ ПРОВЕРОК КАТЕГОРИИ УПД
 # ============================================================================
 
 def get_upd_checkers():
     """Возвращает список всех проверок категории УПД"""
     return [
+        # Автоматические проверки
         UPD1Checker(),
         UPD2Checker(),
         UPD3Checker(),
@@ -316,4 +369,13 @@ def get_upd_checkers():
         UPD10Checker(),
         UPD13Checker(),
         UPD14Checker(),
+        # Ручные проверки
+        UPD7Checker(),
+        UPD8Checker(),
+        UPD9Checker(),
+        UPD11Checker(),
+        UPD12Checker(),
+        UPD15Checker(),
+        UPD16Checker(),
+        UPD17Checker(),
     ]
