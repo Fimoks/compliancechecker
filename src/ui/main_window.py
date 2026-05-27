@@ -6,13 +6,191 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QTreeWidget, QTreeWidgetItem, QProgressBar,
     QTabWidget, QTextEdit, QLabel, QStatusBar, QHeaderView,
-    QMessageBox, QGroupBox, QRadioButton, QButtonGroup
+    QMessageBox, QGroupBox, QRadioButton, QButtonGroup, QDialog,
+    QScrollArea, QStackedWidget
 )
-from PySide6.QtCore import Qt, QThread, Signal, QSize
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
 from PySide6.QtGui import QFont
 
 from core.engine import ComplianceEngine
 
+
+# ============================================================================
+# ДИАЛОГ ДЛЯ РУЧНЫХ ПРОВЕРОК
+# ============================================================================
+
+class ManualChecksDialog(QDialog):
+    answers_saved = Signal(dict)
+    
+    def __init__(self, manual_checks, parent=None):
+        super().__init__(parent)
+        self.manual_checks = manual_checks
+        self.answers = {}
+        self.setWindowTitle("Ручные проверки")
+        self.setMinimumSize(600, 500)
+        self.setModal(True)
+        self._setup_ui()
+        self._load_answers()
+    
+    def _setup_ui(self):
+        layout = QVBoxLayout(self)
+        
+        title = QLabel("✋ Ответьте на вопросы")
+        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0e0e0; margin: 10px;")
+        layout.addWidget(title)
+        
+        self.progress_bar = QProgressBar()
+        layout.addWidget(self.progress_bar)
+        
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("background-color: #2b2b2b;")
+        scroll_widget = QWidget()
+        self.scroll_layout = QVBoxLayout(scroll_widget)
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+        
+        btn_layout = QHBoxLayout()
+        self.save_btn = QPushButton("💾 Сохранить и завершить")
+        self.cancel_btn = QPushButton("Отмена")
+        self.save_btn.clicked.connect(self._on_save)
+        self.cancel_btn.clicked.connect(self.reject)
+        btn_layout.addWidget(self.save_btn)
+        btn_layout.addWidget(self.cancel_btn)
+        layout.addLayout(btn_layout)
+        
+        self.question_widgets = []
+        for check in self.manual_checks:
+            self._add_question_widget(check)
+        
+        self._update_progress()
+    
+    def _add_question_widget(self, check):
+        group = QGroupBox(f"{check['id']}: {check['name']}")
+        group.setStyleSheet("""
+            QGroupBox {
+                color: #e0e0e0;
+                border: 1px solid #3c3c3c;
+                border-radius: 5px;
+                margin-top: 10px;
+                background-color: #1e1e1e;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+        """)
+        group_layout = QVBoxLayout(group)
+        
+        question_label = QLabel(check['question'])
+        question_label.setWordWrap(True)
+        question_label.setStyleSheet("color: #e0e0e0; padding: 5px;")
+        group_layout.addWidget(question_label)
+        
+        radio_layout = QHBoxLayout()
+        radio_group = QButtonGroup(self)
+        
+        rb_yes = QRadioButton("✅ Да")
+        rb_no = QRadioButton("❌ Нет")
+        
+        # Стиль для радиокнопок (видимые кружки)
+        radio_style = """
+            QRadioButton {
+                color: #e0e0e0;
+                spacing: 8px;
+            }
+            QRadioButton::indicator {
+                width: 13px;
+                height: 13px;
+                border-radius: 7px;
+                border: 1px solid #888888;
+                background-color: #2b2b2b;
+            }
+            QRadioButton::indicator:checked {
+                border: 1px solid #0d7377;
+                background-color: #0d7377;
+            }
+            QRadioButton::indicator:hover {
+                border: 1px solid #14a085;
+            }
+        """
+        rb_yes.setStyleSheet(radio_style)
+        rb_no.setStyleSheet(radio_style)
+        
+        radio_group.addButton(rb_yes, 1)
+        radio_group.addButton(rb_no, 0)
+        
+        radio_layout.addWidget(rb_yes)
+        radio_layout.addWidget(rb_no)
+        radio_layout.addStretch()
+        group_layout.addLayout(radio_layout)
+        
+        self.scroll_layout.addWidget(group)
+        
+        self.question_widgets.append({
+            'id': check['id'],
+            'group': radio_group,
+            'rb_yes': rb_yes,
+            'rb_no': rb_no
+        })
+    
+    def _load_answers(self):
+        import json
+        import os
+        
+        answers_file = "manual_answers.json"
+        if os.path.exists(answers_file):
+            try:
+                with open(answers_file, 'r', encoding='utf-8') as f:
+                    saved = json.load(f)
+                    for wid in self.question_widgets:
+                        if wid['id'] in saved:
+                            value = saved[wid['id']]
+                            if value == 1:
+                                wid['rb_yes'].setChecked(True)
+                            elif value == 0:
+                                wid['rb_no'].setChecked(True)
+            except:
+                pass
+    
+    def _save_answers(self):
+        import json
+        
+        self.answers = {}
+        for wid in self.question_widgets:
+            if wid['rb_yes'].isChecked():
+                self.answers[wid['id']] = 1
+            elif wid['rb_no'].isChecked():
+                self.answers[wid['id']] = 0
+            else:
+                self.answers[wid['id']] = -1
+        
+        with open("manual_answers.json", 'w', encoding='utf-8') as f:
+            json.dump(self.answers, f, ensure_ascii=False, indent=2)
+        
+        return self.answers
+    
+    def _update_progress(self):
+        answered = 0
+        for wid in self.question_widgets:
+            if wid['rb_yes'].isChecked() or wid['rb_no'].isChecked():
+                answered += 1
+        
+        total = len(self.question_widgets)
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(answered)
+        self.progress_bar.setFormat(f"Отвечено: {answered} из {total}")
+    
+    def _on_save(self):
+        answers = self._save_answers()
+        self.answers_saved.emit(answers)
+        self.accept()
+
+
+# ============================================================================
+# ОСНОВНОЕ ОКНО ПРИЛОЖЕНИЯ
+# ============================================================================
 
 class CheckWorker(QThread):
     progress = Signal(int, int)
@@ -52,7 +230,7 @@ class ComplianceCheckerWindow(QMainWindow):
         self.setMinimumSize(1000, 700)
         self.results = []
         self.security_level = 4
-        self.include_manual_checks = False  # False = только авто, True = авто + ручные
+        self.include_manual_checks = False
         self.check_worker = None
         self._check_finished_flag = False
         self._setup_ui()
@@ -66,6 +244,7 @@ class ComplianceCheckerWindow(QMainWindow):
         header = QHBoxLayout()
         title = QLabel("🛡️ COMPLIANCE CHECKER 152-ФЗ")
         title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        title.setStyleSheet("color: #e0e0e0;")
         header.addWidget(title)
         header.addStretch()
         about_btn = QPushButton("📖 О программе")
@@ -73,7 +252,6 @@ class ComplianceCheckerWindow(QMainWindow):
         header.addWidget(about_btn)
         layout.addLayout(header)
 
-        # Панель настроек в одной строке
         settings_layout = QHBoxLayout()
         self._setup_level_selector(settings_layout)
         self._setup_check_type_selector(settings_layout)
@@ -88,43 +266,41 @@ class ComplianceCheckerWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
-        # ========== ВКЛАДКИ ==========
         self.tab_widget = QTabWidget()
         
         # --- Вкладка 1: Сводка ---
         self.summary_widget = QWidget()
         self.summary_layout = QVBoxLayout(self.summary_widget)
         
-        # Сообщение "Нет данных" (показывается до проверки)
-        self.summary_empty_label = QLabel("📋 Нет данных для отображения\n\nЗапустите проверку, чтобы увидеть сводку")
-        self.summary_empty_label.setFont(QFont("Arial", 14))
-        self.summary_empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.summary_empty_label.setStyleSheet("color: #888888; padding: 50px;")
-        self.summary_layout.addWidget(self.summary_empty_label)
+        self.summary_stacked = QStackedWidget()
         
-        # Контейнер с данными (скрыт до проверки)
-        self.summary_data_widget = QWidget()
-        self.summary_data_layout = QVBoxLayout(self.summary_data_widget)
+        empty_widget = QWidget()
+        empty_layout = QVBoxLayout(empty_widget)
+        empty_label = QLabel("📋 Нет данных для отображения\n\nЗапустите проверку, чтобы увидеть сводку")
+        empty_label.setFont(QFont("Arial", 14))
+        empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_label.setStyleSheet("color: #888888; padding: 50px;")
+        empty_layout.addWidget(empty_label)
+        self.summary_stacked.addWidget(empty_widget)
         
-        # Общий статус
+        data_widget = QWidget()
+        data_layout = QVBoxLayout(data_widget)
+        
         self.summary_status_label = QLabel()
         self.summary_status_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
         self.summary_status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.summary_data_layout.addWidget(self.summary_status_label)
+        data_layout.addWidget(self.summary_status_label)
         
-        # Процент соответствия
         self.percent_label = QLabel()
         self.percent_label.setFont(QFont("Arial", 48, QFont.Weight.Bold))
         self.percent_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.summary_data_layout.addWidget(self.percent_label)
+        data_layout.addWidget(self.percent_label)
         
-        # Статистика
         self.stats_label = QLabel()
         self.stats_label.setFont(QFont("Arial", 12))
         self.stats_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.summary_data_layout.addWidget(self.stats_label)
+        data_layout.addWidget(self.stats_label)
         
-        # Результаты по категориям
         self.category_tree = QTreeWidget()
         self.category_tree.setHeaderLabels(["Категория", "Пройдено", "Всего", "Статус"])
         self.category_tree.setAlternatingRowColors(True)
@@ -132,18 +308,13 @@ class ComplianceCheckerWindow(QMainWindow):
         self.category_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.category_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.category_tree.header().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.summary_data_layout.addWidget(self.category_tree)
+        data_layout.addWidget(self.category_tree)
         
-        self.summary_data_layout.addStretch()
-        self.summary_layout.addWidget(self.summary_data_widget)
-        
-        # Изначально показываем пустое сообщение, скрываем данные
-        self.summary_empty_label.setVisible(True)
-        self.summary_data_widget.setVisible(False)
-        
+        self.summary_stacked.addWidget(data_widget)
+        self.summary_layout.addWidget(self.summary_stacked)
         self.tab_widget.addTab(self.summary_widget, "📊 Сводка")
         
-        # --- Вкладка 2: Результаты (детально) ---
+        # --- Вкладка 2: Результаты ---
         self.results_tree = QTreeWidget()
         self.results_tree.setWordWrap(True)
         self.results_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -168,21 +339,55 @@ class ComplianceCheckerWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
         self.status_bar.showMessage("Готов к проверке. Выберите уровень, тип проверок и нажмите «Начать проверку»")
+        
+        self.summary_stacked.setCurrentIndex(0)
 
     def _setup_level_selector(self, layout):
         group_box = QGroupBox("Уровень защищённости")
+        group_box.setStyleSheet("QGroupBox { color: #e0e0e0; border: 1px solid #3c3c3c; margin-top: 10px; }")
         group_layout = QVBoxLayout()
         self.level_group = QButtonGroup(self)
+        
+        rb_style = """
+            QRadioButton {
+                color: #e0e0e0;
+                spacing: 8px;
+            }
+            QRadioButton::indicator {
+                width: 13px;
+                height: 13px;
+                border-radius: 7px;
+                border: 1px solid #888888;
+                background-color: #2b2b2b;
+            }
+            QRadioButton::indicator:checked {
+                border: 1px solid #0d7377;
+                background-color: #0d7377;
+            }
+            QRadioButton::indicator:hover {
+                border: 1px solid #14a085;
+            }
+        """
+        
         self.rb_level4 = QRadioButton("УЗ-4 (базовый) — для малого бизнеса, ИП")
         self.rb_level3 = QRadioButton("УЗ-3 (средний) — для большинства организаций")
         self.rb_level2 = QRadioButton("УЗ-2 (повышенный) — для крупных компаний")
         self.rb_level1 = QRadioButton("УЗ-1 (максимальный) — для спецсубъектов, гостайна")
+        
+        self.rb_level4.setStyleSheet(rb_style)
+        self.rb_level3.setStyleSheet(rb_style)
+        self.rb_level2.setStyleSheet(rb_style)
+        self.rb_level1.setStyleSheet(rb_style)
+        
         self.rb_level4.setChecked(True)
+        
         self.level_group.addButton(self.rb_level4, 4)
         self.level_group.addButton(self.rb_level3, 3)
         self.level_group.addButton(self.rb_level2, 2)
         self.level_group.addButton(self.rb_level1, 1)
+        
         self.level_group.buttonClicked.connect(self._on_level_changed)
+        
         group_layout.addWidget(self.rb_level4)
         group_layout.addWidget(self.rb_level3)
         group_layout.addWidget(self.rb_level2)
@@ -192,14 +397,44 @@ class ComplianceCheckerWindow(QMainWindow):
 
     def _setup_check_type_selector(self, layout):
         group_box = QGroupBox("Тип проверок")
+        group_box.setStyleSheet("QGroupBox { color: #e0e0e0; border: 1px solid #3c3c3c; margin-top: 10px; }")
         group_layout = QVBoxLayout()
         self.check_type_group = QButtonGroup(self)
+        
+        rb_style = """
+            QRadioButton {
+                color: #e0e0e0;
+                spacing: 8px;
+            }
+            QRadioButton::indicator {
+                width: 13px;
+                height: 13px;
+                border-radius: 7px;
+                border: 1px solid #888888;
+                background-color: #2b2b2b;
+            }
+            QRadioButton::indicator:checked {
+                border: 1px solid #0d7377;
+                background-color: #0d7377;
+            }
+            QRadioButton::indicator:hover {
+                border: 1px solid #14a085;
+            }
+        """
+        
         self.rb_auto_only = QRadioButton("Только автоматические")
         self.rb_auto_manual = QRadioButton("Автоматические + ручные")
+        
+        self.rb_auto_only.setStyleSheet(rb_style)
+        self.rb_auto_manual.setStyleSheet(rb_style)
+        
         self.rb_auto_only.setChecked(True)
+        
         self.check_type_group.addButton(self.rb_auto_only, 0)
         self.check_type_group.addButton(self.rb_auto_manual, 1)
+        
         self.check_type_group.buttonClicked.connect(self._on_check_type_changed)
+        
         group_layout.addWidget(self.rb_auto_only)
         group_layout.addWidget(self.rb_auto_manual)
         group_box.setLayout(group_layout)
@@ -218,6 +453,7 @@ class ComplianceCheckerWindow(QMainWindow):
     def _apply_styles(self):
         self.setStyleSheet("""
             QMainWindow { background-color: #2b2b2b; }
+            QWidget { background-color: #2b2b2b; }
             QPushButton { background-color: #0d7377; color: white; border: none; border-radius: 5px; padding: 10px; font-size: 14px; font-weight: bold; }
             QPushButton:hover { background-color: #14a085; }
             QTreeWidget { background-color: #1e1e1e; alternate-background-color: #252525; color: #e0e0e0; outline: none; }
@@ -229,29 +465,24 @@ class ComplianceCheckerWindow(QMainWindow):
             QTabBar::tab:selected { background-color: #0d7377; }
             QTextEdit { background-color: #1e1e1e; color: #e0e0e0; font-family: Consolas; }
             QLabel { color: #e0e0e0; }
-            QGroupBox { color: #e0e0e0; border: 1px solid #3c3c3c; margin-top: 10px; }
-            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
-            QRadioButton { color: #e0e0e0; }
             QProgressBar { background-color: #3c3c3c; border-radius: 5px; text-align: center; color: white; }
             QProgressBar::chunk { background-color: #0d7377; border-radius: 5px; }
+            QGroupBox { color: #e0e0e0; border: 1px solid #3c3c3c; margin-top: 10px; }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 5px; }
         """)
 
     def _update_summary(self):
-        """Обновляет сводку по результатам проверки"""
         total = len(self.results)
         
         if total == 0:
-            self.summary_empty_label.setVisible(True)
-            self.summary_data_widget.setVisible(False)
+            self.summary_stacked.setCurrentIndex(0)
             return
         else:
-            self.summary_empty_label.setVisible(False)
-            self.summary_data_widget.setVisible(True)
+            self.summary_stacked.setCurrentIndex(1)
         
         passed = sum(1 for r in self.results if r['status'])
         percent = (passed * 100 // total) if total > 0 else 0
         
-        # Общий статус
         if percent == 100:
             status = "✅ СООТВЕТСТВУЕТ"
             status_color = "#4caf50"
@@ -264,14 +495,9 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self.summary_status_label.setText(status)
         self.summary_status_label.setStyleSheet(f"color: {status_color};")
-        
-        # Процент
         self.percent_label.setText(f"{percent}%")
-        
-        # Статистика
         self.stats_label.setText(f"Пройдено проверок: {passed} из {total}")
         
-        # Группировка по категориям
         categories = {}
         for r in self.results:
             cat_id = r.get('id', '???').split('.')[0]
@@ -316,11 +542,11 @@ class ComplianceCheckerWindow(QMainWindow):
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
         
-        # Очищаем сводку
         self.summary_status_label.setText("Проверка выполняется...")
         self.percent_label.setText("—")
         self.stats_label.setText("")
         self.category_tree.clear()
+        self.summary_stacked.setCurrentIndex(1)
         
         self._log("=" * 50)
         self._log(f"ЗАПУСК ПРОВЕРКИ (УЗ-{self.security_level})")
@@ -333,7 +559,8 @@ class ComplianceCheckerWindow(QMainWindow):
         self._log(f"Всего проверок: {len(checkers)}")
         
         if self.include_manual_checks:
-            self._log("Ручные проверки (опросник) будут отображены после завершения автоматических")
+            manual_count = sum(1 for c in checkers if getattr(c, 'is_manual', False))
+            self._log(f"Из них ручных: {manual_count}")
         
         self.check_worker = CheckWorker()
         self.check_worker.set_checkers(checkers)
@@ -354,11 +581,9 @@ class ComplianceCheckerWindow(QMainWindow):
         item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
         item.setText(1, status_text)
         
-        # Значение (без обрезания)
         val = str(result.get('value', ''))
         item.setText(2, val)
         
-        # Рекомендация (без обрезания)
         rec = result.get('message', '')
         if not rec and not result['status']:
             rec = "Требуется настройка"
@@ -366,11 +591,45 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self.results_tree.addTopLevelItem(item)
         
-        # Принудительное обновление высоты строки для переноса
         for col in range(self.results_tree.columnCount()):
             self.results_tree.resizeColumnToContents(col)
         
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
+
+    def _show_manual_checks_dialog(self):
+        manual_checks = []
+        for r in self.results:
+            if r.get('is_manual', False):
+                manual_checks.append({
+                    'id': r.get('id', '???'),
+                    'name': r.get('name', 'Неизвестно'),
+                    'question': r.get('message', 'Нет вопроса')
+                })
+        
+        if not manual_checks:
+            return
+        
+        dialog = ManualChecksDialog(manual_checks, self)
+        dialog.answers_saved.connect(self._on_manual_answers_saved)
+        dialog.exec()
+    
+    def _on_manual_answers_saved(self, answers):
+        for r in self.results:
+            if r.get('is_manual', False) and r.get('id') in answers:
+                answer = answers[r['id']]
+                if answer == 1:
+                    r['status'] = True
+                    r['message'] = "Пользователь подтвердил выполнение"
+                elif answer == 0:
+                    r['status'] = False
+                    r['message'] = "Пользователь не подтвердил выполнение"
+        
+        self.results_tree.clear()
+        for r in self.results:
+            self._add_result(r)
+        
+        self._update_summary()
+        self._log("Ручные проверки сохранены")
 
     def _check_finished(self):
         if self._check_finished_flag:
@@ -386,7 +645,7 @@ class ComplianceCheckerWindow(QMainWindow):
         self.progress_bar.setVisible(False)
         self.start_btn.setEnabled(True)
         
-        # Финальное обновление высоты всех строк
+        # Обновление высоты строк
         for i in range(self.results_tree.topLevelItemCount()):
             item = self.results_tree.topLevelItem(i)
             for col in range(self.results_tree.columnCount()):
@@ -394,7 +653,6 @@ class ComplianceCheckerWindow(QMainWindow):
                     self.results_tree.indexFromItem(item, col)
                 ))
         
-        # Обновляем сводку
         self._update_summary()
         
         passed = sum(1 for r in self.results if r['status'])
@@ -413,9 +671,9 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self._log("=" * 50)
         
-        # TODO: Если включены ручные проверки — показать опросник
+        # Показываем диалог ручных проверок через QTimer, чтобы не блокировать UI
         if self.include_manual_checks:
-            self._log("Ручные проверки пока не реализованы. Будет добавлен опросник.")
+            QTimer.singleShot(100, self._show_manual_checks_dialog)
 
 
 def main():
