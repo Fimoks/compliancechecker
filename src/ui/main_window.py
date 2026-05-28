@@ -94,7 +94,6 @@ class ManualChecksDialog(QDialog):
         rb_yes = QRadioButton("✅ Да")
         rb_no = QRadioButton("❌ Нет")
         
-        # Стиль для радиокнопок (видимые кружки)
         radio_style = """
             QRadioButton {
                 color: #e0e0e0;
@@ -597,6 +596,9 @@ class ComplianceCheckerWindow(QMainWindow):
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
 
     def _show_manual_checks_dialog(self):
+        """Показывает модальное окно с ручными проверками"""
+        self._log("Начало _show_manual_checks_dialog")
+        
         manual_checks = []
         for r in self.results:
             if r.get('is_manual', False):
@@ -607,13 +609,27 @@ class ComplianceCheckerWindow(QMainWindow):
                 })
         
         if not manual_checks:
+            self._log("Нет ручных проверок для отображения")
             return
         
-        dialog = ManualChecksDialog(manual_checks, self)
-        dialog.answers_saved.connect(self._on_manual_answers_saved)
-        dialog.exec()
+        self._log(f"Создание диалога для {len(manual_checks)} вопросов")
+        
+        try:
+            dialog = ManualChecksDialog(manual_checks, self)
+            dialog.answers_saved.connect(self._on_manual_answers_saved)
+            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+            self._log("Диалог создан, запуск exec()")
+            result = dialog.exec()
+            self._log(f"Диалог закрыт, результат: {result}")
+        except Exception as e:
+            self._log(f"ОШИБКА при создании/показе диалога: {e}")
+            import traceback
+            traceback.print_exc()
     
     def _on_manual_answers_saved(self, answers):
+        self._log("Начало обработки сохранённых ответов")
+        
+        # Обновляем статусы в результатах
         for r in self.results:
             if r.get('is_manual', False) and r.get('id') in answers:
                 answer = answers[r['id']]
@@ -624,12 +640,22 @@ class ComplianceCheckerWindow(QMainWindow):
                     r['status'] = False
                     r['message'] = "Пользователь не подтвердил выполнение"
         
-        self.results_tree.clear()
-        for r in self.results:
-            self._add_result(r)
+        # Обновляем существующие элементы в дереве
+        for i, r in enumerate(self.results):
+            item = self.results_tree.topLevelItem(i)
+            if item:
+                status_text = "✅ Пройдено" if r['status'] else "❌ Не пройдено"
+                item.setText(1, status_text)
+                rec = r.get('message', '')
+                if not rec and not r['status']:
+                    rec = "Требуется настройка"
+                item.setText(3, rec)
         
         self._update_summary()
         self._log("Ручные проверки сохранены")
+        
+        # Принудительно обновляем интерфейс
+        QApplication.processEvents()
 
     def _check_finished(self):
         if self._check_finished_flag:
@@ -671,9 +697,12 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self._log("=" * 50)
         
-        # Показываем диалог ручных проверок через QTimer, чтобы не блокировать UI
+        # Принудительно обрабатываем все события перед показом диалога
+        QApplication.processEvents()
+        
+        # Показываем диалог ручных проверок синхронно
         if self.include_manual_checks:
-            QTimer.singleShot(100, self._show_manual_checks_dialog)
+            self._show_manual_checks_dialog()
 
 
 def main():
