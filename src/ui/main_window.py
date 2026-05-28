@@ -304,12 +304,21 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.results_tree.setItemsExpandable(False)
         self.results_tree.setUniformRowHeights(False)
+        self.results_tree.setIndentation(0)
+        self.results_tree.setRootIsDecorated(False)
+        # Разрешаем последнему столбцу растягиваться
+        self.results_tree.header().setStretchLastSection(True)
+        # Убираем минимальную ширину, чтобы избежать нежелательных отступов
+        self.results_tree.header().setMinimumSectionSize(0)
+        self.results_tree.setStyleSheet("QTreeWidget::item { white-space: normal; }")
+        # Первые три столбца можно изменять вручную, четвёртый — растягивается
+        self.results_tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
+        self.results_tree.header().setSectionResizeMode(1, QHeaderView.Interactive)
+        self.results_tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
+        self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
+        
         self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
         self.results_tree.setAlternatingRowColors(True)
-        self.results_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.results_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.results_tree.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
         self.tab_widget.addTab(self.results_tree, "📋 Результаты")
         
         # --- Вкладка 3: Лог ---
@@ -325,6 +334,29 @@ class ComplianceCheckerWindow(QMainWindow):
         self.status_bar.showMessage("Готов к проверке. Выберите уровень, тип проверок и нажмите «Начать проверку»")
         
         self.summary_stacked.setCurrentIndex(0)
+
+    def _resize_columns(self):
+        # Получаем ширину видимой области дерева
+        total_width = self.results_tree.viewport().width()
+        if total_width <= 0:
+            # Если дерево ещё не отрисовано, используем ширину окна
+            total_width = self.width() - 50
+            if total_width < 200:
+                total_width = 1000
+        # Устанавливаем пропорциональную ширину для первых трёх столбцов
+        widths = [0.40, 0.15, 0.20]  # 40%, 15%, 20%
+        for col, ratio in enumerate(widths):
+            self.results_tree.setColumnWidth(col, int(total_width * ratio))
+        # Четвёртый столбец растягивается автоматически (setStretchLastSection)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._resize_columns()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Небольшая задержка для полной отрисовки
+        QTimer.singleShot(50, self._resize_columns)
 
     def _setup_level_selector(self, layout):
         group_box = QGroupBox("Уровень защищённости")
@@ -456,7 +488,6 @@ class ComplianceCheckerWindow(QMainWindow):
         """)
 
     def _update_summary(self):
-        # Считаем только реальные проверки (у которых status не None)
         real_results = [r for r in self.results if r.get('status') is not None]
         total = len(real_results)
         
@@ -484,7 +515,6 @@ class ComplianceCheckerWindow(QMainWindow):
         self.percent_label.setText(f"{percent}%")
         self.stats_label.setText(f"Пройдено проверок: {passed} из {total}")
         
-        # Группировка по категориям для сводки (только реальные проверки)
         categories = {}
         for r in real_results:
             cat_id = r.get('id', '???').split('.')[0]
@@ -558,7 +588,6 @@ class ComplianceCheckerWindow(QMainWindow):
         self.check_worker.start()
 
     def _add_result_with_grouping(self, result):
-        """Добавляет результат с группировкой по категориям"""
         result_id = result.get('id', '???')
         category = result_id.split('.')[0] if '.' in result_id else result_id
         
@@ -593,14 +622,13 @@ class ComplianceCheckerWindow(QMainWindow):
         font = QFont()
         font.setBold(True)
         item.setFont(0, font)
-        # Закрашиваем фон для всех столбцов
         for col in range(self.results_tree.columnCount()):
             item.setBackground(col, QColor(60, 60, 80))
-        # Остальные столбцы оставляем пустыми
         item.setText(1, "")
         item.setText(2, "")
         item.setText(3, "")
         self.results_tree.addTopLevelItem(item)
+        self.results_tree.scheduleDelayedItemsLayout()
     
     def _add_result_item(self, result, add_to_list=False):
         if add_to_list:
@@ -609,20 +637,13 @@ class ComplianceCheckerWindow(QMainWindow):
         item = QTreeWidgetItem()
         item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
         item.setText(1, status_text)
-        
-        val = str(result.get('value', ''))
-        item.setText(2, val)
-        
+        item.setText(2, str(result.get('value', '')))
         rec = result.get('message', '')
         if not rec and not result['status']:
             rec = "Требуется настройка"
         item.setText(3, rec)
-        
         self.results_tree.addTopLevelItem(item)
-        
-        for col in range(self.results_tree.columnCount()):
-            self.results_tree.resizeColumnToContents(col)
-        
+        self.results_tree.scheduleDelayedItemsLayout()
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
 
     def _update_progress(self, current, total):
@@ -632,51 +653,24 @@ class ComplianceCheckerWindow(QMainWindow):
 
     def _show_manual_checks_dialog(self):
         self._log("Начало _show_manual_checks_dialog")
-        
-        manual_checks = []
-        for r in self.results:
-            if r.get('is_manual', False):
-                manual_checks.append({
-                    'id': r.get('id', '???'),
-                    'name': r.get('name', 'Неизвестно'),
-                    'question': r.get('message', 'Нет вопроса')
-                })
-        
+        manual_checks = [{'id': r['id'], 'name': r['name'], 'question': r['message']} for r in self.results if r.get('is_manual')]
         if not manual_checks:
             self._log("Нет ручных проверок для отображения")
             return
-        
-        self._log(f"Создание диалога для {len(manual_checks)} вопросов")
-        
-        try:
-            dialog = ManualChecksDialog(manual_checks, self)
-            dialog.answers_saved.connect(self._on_manual_answers_saved)
-            dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-            result = dialog.exec()
-            self._log(f"Диалог закрыт, результат: {result}")
-        except Exception as e:
-            self._log(f"ОШИБКА при создании/показе диалога: {e}")
-            import traceback
-            traceback.print_exc()
+        dialog = ManualChecksDialog(manual_checks, self)
+        dialog.answers_saved.connect(self._on_manual_answers_saved)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.exec()
     
     def _on_manual_answers_saved(self, answers):
         self._log("Начало обработки сохранённых ответов")
-        
-        # Обновляем статусы в существующих результатах
         for r in self.results:
-            if r.get('is_manual', False) and r.get('id') in answers and r.get('status') is not None:
-                answer = answers[r['id']]
-                if answer == 1:
-                    r['status'] = True
-                    r['message'] = "Пользователь подтвердил выполнение"
-                elif answer == 0:
-                    r['status'] = False
-                    r['message'] = "Пользователь не подтвердил выполнение"
+            if r.get('is_manual') and r['id'] in answers and r.get('status') is not None:
+                r['status'] = (answers[r['id']] == 1)
+                r['message'] = "Пользователь подтвердил выполнение" if r['status'] else "Пользователь не подтвердил выполнение"
         
-        # Перестраиваем дерево, используя только реальные проверки (без добавления в список)
         self.results_tree.clear()
         self._last_category = None
-        
         category_order = ["ИАФ", "УПД", "ОПС", "ЗНИ", "РСБ", "АВЗ", "СОВ", "АНЗ", "ОЦЛ", "ОДТ", "ЗСВ", "ЗТС", "ЗИС", "ИНЦ", "УКФ"]
         category_names = {
             "ИАФ": "I. Идентификация и аутентификация (ИАФ)",
@@ -695,22 +689,16 @@ class ComplianceCheckerWindow(QMainWindow):
             "ИНЦ": "XIV. Выявление инцидентов (ИНЦ)",
             "УКФ": "XV. Управление конфигурацией (УКФ)",
         }
-        
-        # Группируем реальные проверки (уже в self.results)
         real_results = [r for r in self.results if r.get('status') is not None]
         grouped = {}
         for r in real_results:
-            cat_id = r.get('id', '???').split('.')[0]
-            if cat_id not in grouped:
-                grouped[cat_id] = []
-            grouped[cat_id].append(r)
-        
-        for cat_id in category_order:
-            if cat_id in grouped:
-                self._add_header(category_names.get(cat_id, cat_id))
-                for r in grouped[cat_id]:
-                    self._add_result_item(r, add_to_list=False)   # не добавляем в список повторно
-        
+            cat = r['id'].split('.')[0]
+            grouped.setdefault(cat, []).append(r)
+        for cat in category_order:
+            if cat in grouped:
+                self._add_header(category_names.get(cat, cat))
+                for r in grouped[cat]:
+                    self._add_result_item(r, add_to_list=False)
         self._update_summary()
         self._log("Ручные проверки сохранены")
         QApplication.processEvents()
@@ -719,46 +707,32 @@ class ComplianceCheckerWindow(QMainWindow):
         if self._check_finished_flag:
             return
         self._check_finished_flag = True
-
         if self.check_worker:
             try:
                 self.check_worker.finished.disconnect(self._check_finished)
             except RuntimeError:
                 pass
-
         self.progress_bar.setVisible(False)
         self.start_btn.setEnabled(True)
-        
-        # Обновление высоты строк
         for i in range(self.results_tree.topLevelItemCount()):
             item = self.results_tree.topLevelItem(i)
             for col in range(self.results_tree.columnCount()):
-                item.setSizeHint(col, self.results_tree.sizeHintForIndex(
-                    self.results_tree.indexFromItem(item, col)
-                ))
-        
+                item.setSizeHint(col, self.results_tree.sizeHintForIndex(self.results_tree.indexFromItem(item, col)))
         self._update_summary()
-        
-        # Считаем только реальные проверки (с status не None)
         real_results = [r for r in self.results if r.get('status') is not None]
         passed = sum(1 for r in real_results if r['status'])
         total = len(real_results)
         percent = (passed * 100 // total) if total > 0 else 0
-        
         self._log("=" * 50)
         self._log(f"ПРОВЕРКА ЗАВЕРШЕНА. Пройдено: {passed} из {total} ({percent}%)")
         self.status_bar.showMessage(f"Проверка завершена. Пройдено: {passed} из {total} ({percent}%)")
-        
         if passed < total:
             self._log("⚠️ Нарушения:")
             for r in real_results:
                 if not r['status'] and r.get('message'):
                     self._log(f"  • {r.get('id', '???')}: {r.get('message', '')[:100]}")
-        
         self._log("=" * 50)
-        
         QApplication.processEvents()
-        
         if self.include_manual_checks:
             self._show_manual_checks_dialog()
 
