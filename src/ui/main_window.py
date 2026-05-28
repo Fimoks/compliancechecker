@@ -10,7 +10,7 @@ from PySide6.QtWidgets import (
     QScrollArea, QStackedWidget
 )
 from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor
 
 from core.engine import ComplianceEngine
 
@@ -39,9 +39,6 @@ class ManualChecksDialog(QDialog):
         title.setStyleSheet("font-size: 16px; font-weight: bold; color: #e0e0e0; margin: 10px;")
         layout.addWidget(title)
         
-        self.progress_bar = QProgressBar()
-        layout.addWidget(self.progress_bar)
-        
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("background-color: #2b2b2b;")
@@ -62,8 +59,6 @@ class ManualChecksDialog(QDialog):
         self.question_widgets = []
         for check in self.manual_checks:
             self._add_question_widget(check)
-        
-        self._update_progress()
     
     def _add_question_widget(self, check):
         group = QGroupBox(f"{check['id']}: {check['name']}")
@@ -170,17 +165,6 @@ class ManualChecksDialog(QDialog):
         
         return self.answers
     
-    def _update_progress(self):
-        answered = 0
-        for wid in self.question_widgets:
-            if wid['rb_yes'].isChecked() or wid['rb_no'].isChecked():
-                answered += 1
-        
-        total = len(self.question_widgets)
-        self.progress_bar.setMaximum(total)
-        self.progress_bar.setValue(answered)
-        self.progress_bar.setFormat(f"Отвечено: {answered} из {total}")
-    
     def _on_save(self):
         answers = self._save_answers()
         self.answers_saved.emit(answers)
@@ -232,6 +216,7 @@ class ComplianceCheckerWindow(QMainWindow):
         self.include_manual_checks = False
         self.check_worker = None
         self._check_finished_flag = False
+        self._last_category = None
         self._setup_ui()
         self._apply_styles()
 
@@ -471,7 +456,9 @@ class ComplianceCheckerWindow(QMainWindow):
         """)
 
     def _update_summary(self):
-        total = len(self.results)
+        # Считаем только реальные проверки (у которых status не None)
+        real_results = [r for r in self.results if r.get('status') is not None]
+        total = len(real_results)
         
         if total == 0:
             self.summary_stacked.setCurrentIndex(0)
@@ -479,7 +466,7 @@ class ComplianceCheckerWindow(QMainWindow):
         else:
             self.summary_stacked.setCurrentIndex(1)
         
-        passed = sum(1 for r in self.results if r['status'])
+        passed = sum(1 for r in real_results if r['status'])
         percent = (passed * 100 // total) if total > 0 else 0
         
         if percent == 100:
@@ -497,8 +484,9 @@ class ComplianceCheckerWindow(QMainWindow):
         self.percent_label.setText(f"{percent}%")
         self.stats_label.setText(f"Пройдено проверок: {passed} из {total}")
         
+        # Группировка по категориям для сводки (только реальные проверки)
         categories = {}
-        for r in self.results:
+        for r in real_results:
             cat_id = r.get('id', '???').split('.')[0]
             if cat_id not in categories:
                 categories[cat_id] = {'passed': 0, 'total': 0, 'name': r.get('name', cat_id)}
@@ -537,6 +525,7 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.clear()
         self.log_text.clear()
         self.results = []
+        self._last_category = None
         self.start_btn.setEnabled(False)
         self.progress_bar.setVisible(True)
         self.progress_bar.setValue(0)
@@ -564,17 +553,58 @@ class ComplianceCheckerWindow(QMainWindow):
         self.check_worker = CheckWorker()
         self.check_worker.set_checkers(checkers)
         self.check_worker.progress.connect(self._update_progress)
-        self.check_worker.result_ready.connect(self._add_result)
+        self.check_worker.result_ready.connect(self._add_result_with_grouping)
         self.check_worker.finished.connect(self._check_finished)
         self.check_worker.start()
 
-    def _update_progress(self, current, total):
-        self.progress_bar.setMaximum(total)
-        self.progress_bar.setValue(current)
-        self.status_bar.showMessage(f"Выполняется проверка: {current} из {total}")
-
-    def _add_result(self, result):
-        self.results.append(result)
+    def _add_result_with_grouping(self, result):
+        """Добавляет результат с группировкой по категориям"""
+        result_id = result.get('id', '???')
+        category = result_id.split('.')[0] if '.' in result_id else result_id
+        
+        category_names = {
+            "ИАФ": "I. Идентификация и аутентификация (ИАФ)",
+            "УПД": "II. Управление доступом (УПД)",
+            "ОПС": "III. Ограничение программной среды (ОПС)",
+            "ЗНИ": "IV. Защита машинных носителей (ЗНИ)",
+            "РСБ": "V. Регистрация событий безопасности (РСБ)",
+            "АВЗ": "VI. Антивирусная защита (АВЗ)",
+            "СОВ": "VII. Обнаружение вторжений (СОВ)",
+            "АНЗ": "VIII. Контроль защищённости (АНЗ)",
+            "ОЦЛ": "IX. Обеспечение целостности (ОЦЛ)",
+            "ОДТ": "X. Обеспечение доступности (ОДТ)",
+            "ЗСВ": "XI. Защита среды виртуализации (ЗСВ)",
+            "ЗТС": "XII. Защита технических средств (ЗТС)",
+            "ЗИС": "XIII. Защита ИС и связи (ЗИС)",
+            "ИНЦ": "XIV. Выявление инцидентов (ИНЦ)",
+            "УКФ": "XV. Управление конфигурацией (УКФ)",
+        }
+        
+        if self._last_category != category:
+            self._last_category = category
+            header_name = category_names.get(category, category)
+            self._add_header(header_name)
+        
+        self._add_result_item(result, add_to_list=True)
+    
+    def _add_header(self, header_name):
+        item = QTreeWidgetItem()
+        item.setText(0, header_name)
+        font = QFont()
+        font.setBold(True)
+        item.setFont(0, font)
+        # Закрашиваем фон для всех столбцов
+        for col in range(self.results_tree.columnCount()):
+            item.setBackground(col, QColor(60, 60, 80))
+        # Остальные столбцы оставляем пустыми
+        item.setText(1, "")
+        item.setText(2, "")
+        item.setText(3, "")
+        self.results_tree.addTopLevelItem(item)
+    
+    def _add_result_item(self, result, add_to_list=False):
+        if add_to_list:
+            self.results.append(result)
         status_text = "✅ Пройдено" if result['status'] else "❌ Не пройдено"
         item = QTreeWidgetItem()
         item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
@@ -595,8 +625,12 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
 
+    def _update_progress(self, current, total):
+        self.progress_bar.setMaximum(total)
+        self.progress_bar.setValue(current)
+        self.status_bar.showMessage(f"Выполняется проверка: {current} из {total}")
+
     def _show_manual_checks_dialog(self):
-        """Показывает модальное окно с ручными проверками"""
         self._log("Начало _show_manual_checks_dialog")
         
         manual_checks = []
@@ -618,7 +652,6 @@ class ComplianceCheckerWindow(QMainWindow):
             dialog = ManualChecksDialog(manual_checks, self)
             dialog.answers_saved.connect(self._on_manual_answers_saved)
             dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
-            self._log("Диалог создан, запуск exec()")
             result = dialog.exec()
             self._log(f"Диалог закрыт, результат: {result}")
         except Exception as e:
@@ -629,9 +662,9 @@ class ComplianceCheckerWindow(QMainWindow):
     def _on_manual_answers_saved(self, answers):
         self._log("Начало обработки сохранённых ответов")
         
-        # Обновляем статусы в результатах
+        # Обновляем статусы в существующих результатах
         for r in self.results:
-            if r.get('is_manual', False) and r.get('id') in answers:
+            if r.get('is_manual', False) and r.get('id') in answers and r.get('status') is not None:
                 answer = answers[r['id']]
                 if answer == 1:
                     r['status'] = True
@@ -640,21 +673,46 @@ class ComplianceCheckerWindow(QMainWindow):
                     r['status'] = False
                     r['message'] = "Пользователь не подтвердил выполнение"
         
-        # Обновляем существующие элементы в дереве
-        for i, r in enumerate(self.results):
-            item = self.results_tree.topLevelItem(i)
-            if item:
-                status_text = "✅ Пройдено" if r['status'] else "❌ Не пройдено"
-                item.setText(1, status_text)
-                rec = r.get('message', '')
-                if not rec and not r['status']:
-                    rec = "Требуется настройка"
-                item.setText(3, rec)
+        # Перестраиваем дерево, используя только реальные проверки (без добавления в список)
+        self.results_tree.clear()
+        self._last_category = None
+        
+        category_order = ["ИАФ", "УПД", "ОПС", "ЗНИ", "РСБ", "АВЗ", "СОВ", "АНЗ", "ОЦЛ", "ОДТ", "ЗСВ", "ЗТС", "ЗИС", "ИНЦ", "УКФ"]
+        category_names = {
+            "ИАФ": "I. Идентификация и аутентификация (ИАФ)",
+            "УПД": "II. Управление доступом (УПД)",
+            "ОПС": "III. Ограничение программной среды (ОПС)",
+            "ЗНИ": "IV. Защита машинных носителей (ЗНИ)",
+            "РСБ": "V. Регистрация событий безопасности (РСБ)",
+            "АВЗ": "VI. Антивирусная защита (АВЗ)",
+            "СОВ": "VII. Обнаружение вторжений (СОВ)",
+            "АНЗ": "VIII. Контроль защищённости (АНЗ)",
+            "ОЦЛ": "IX. Обеспечение целостности (ОЦЛ)",
+            "ОДТ": "X. Обеспечение доступности (ОДТ)",
+            "ЗСВ": "XI. Защита среды виртуализации (ЗСВ)",
+            "ЗТС": "XII. Защита технических средств (ЗТС)",
+            "ЗИС": "XIII. Защита ИС и связи (ЗИС)",
+            "ИНЦ": "XIV. Выявление инцидентов (ИНЦ)",
+            "УКФ": "XV. Управление конфигурацией (УКФ)",
+        }
+        
+        # Группируем реальные проверки (уже в self.results)
+        real_results = [r for r in self.results if r.get('status') is not None]
+        grouped = {}
+        for r in real_results:
+            cat_id = r.get('id', '???').split('.')[0]
+            if cat_id not in grouped:
+                grouped[cat_id] = []
+            grouped[cat_id].append(r)
+        
+        for cat_id in category_order:
+            if cat_id in grouped:
+                self._add_header(category_names.get(cat_id, cat_id))
+                for r in grouped[cat_id]:
+                    self._add_result_item(r, add_to_list=False)   # не добавляем в список повторно
         
         self._update_summary()
         self._log("Ручные проверки сохранены")
-        
-        # Принудительно обновляем интерфейс
         QApplication.processEvents()
 
     def _check_finished(self):
@@ -681,8 +739,10 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self._update_summary()
         
-        passed = sum(1 for r in self.results if r['status'])
-        total = len(self.results)
+        # Считаем только реальные проверки (с status не None)
+        real_results = [r for r in self.results if r.get('status') is not None]
+        passed = sum(1 for r in real_results if r['status'])
+        total = len(real_results)
         percent = (passed * 100 // total) if total > 0 else 0
         
         self._log("=" * 50)
@@ -691,16 +751,14 @@ class ComplianceCheckerWindow(QMainWindow):
         
         if passed < total:
             self._log("⚠️ Нарушения:")
-            for r in self.results:
+            for r in real_results:
                 if not r['status'] and r.get('message'):
                     self._log(f"  • {r.get('id', '???')}: {r.get('message', '')[:100]}")
         
         self._log("=" * 50)
         
-        # Принудительно обрабатываем все события перед показом диалога
         QApplication.processEvents()
         
-        # Показываем диалог ручных проверок синхронно
         if self.include_manual_checks:
             self._show_manual_checks_dialog()
 
