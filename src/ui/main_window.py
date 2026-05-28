@@ -172,6 +172,32 @@ class ManualChecksDialog(QDialog):
 
 
 # ============================================================================
+# ДИАЛОГ ДЛЯ ПОКАЗА ПОДРОБНОЙ ИНФОРМАЦИИ
+# ============================================================================
+
+class DetailsDialog(QDialog):
+    def __init__(self, title, details, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"Детали: {title}")
+        self.setMinimumSize(550, 450)
+        self.setModal(True)
+        layout = QVBoxLayout(self)
+        
+        text_edit = QTextEdit()
+        text_edit.setPlainText(details)
+        text_edit.setReadOnly(True)
+        text_edit.setFont(QFont("Consolas", 10))
+        layout.addWidget(text_edit)
+        
+        btn_box = QHBoxLayout()
+        close_btn = QPushButton("Закрыть")
+        close_btn.clicked.connect(self.accept)
+        btn_box.addStretch()
+        btn_box.addWidget(close_btn)
+        layout.addLayout(btn_box)
+
+
+# ============================================================================
 # ОСНОВНОЕ ОКНО ПРИЛОЖЕНИЯ
 # ============================================================================
 
@@ -319,6 +345,7 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
         self.results_tree.setAlternatingRowColors(True)
+        self.results_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.tab_widget.addTab(self.results_tree, "📋 Результаты")
         
         # --- Вкладка 3: Лог ---
@@ -624,9 +651,8 @@ class ComplianceCheckerWindow(QMainWindow):
         item.setFont(0, font)
         for col in range(self.results_tree.columnCount()):
             item.setBackground(col, QColor(60, 60, 80))
-        item.setText(1, "")
-        item.setText(2, "")
-        item.setText(3, "")
+        # Занимает всю строку
+        item.setFirstColumnSpanned(True)
         self.results_tree.addTopLevelItem(item)
         self.results_tree.scheduleDelayedItemsLayout()
     
@@ -645,6 +671,35 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.addTopLevelItem(item)
         self.results_tree.scheduleDelayedItemsLayout()
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
+
+    def _on_item_double_clicked(self, item, column):
+        # Пропускаем заголовки групп
+        if item.text(1) == "" and item.text(2) == "" and item.text(3) == "":
+            return
+        item_text = item.text(0)
+        if ":" in item_text:
+            check_id = item_text.split(":")[0].strip()
+        else:
+            check_id = item_text
+        # Ищем результат в self.results
+        result = None
+        for r in self.results:
+            if r.get('id') == check_id:
+                result = r
+                break
+        if not result:
+            return
+        details = f"""ID: {result.get('id', '???')}
+Название: {result.get('name', 'Неизвестно')}
+Статус: {'✅ Пройдено' if result.get('status') else '❌ Не пройдено'}
+Значение:
+{result.get('value', '')}
+
+Рекомендация:
+{result.get('message', '')}
+"""
+        dialog = DetailsDialog(check_id, details, self)
+        dialog.exec()
 
     def _update_progress(self, current, total):
         self.progress_bar.setMaximum(total)
