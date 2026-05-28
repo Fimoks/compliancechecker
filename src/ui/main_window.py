@@ -7,10 +7,10 @@ from PySide6.QtWidgets import (
     QPushButton, QTreeWidget, QTreeWidgetItem, QProgressBar,
     QTabWidget, QTextEdit, QLabel, QStatusBar, QHeaderView,
     QMessageBox, QGroupBox, QRadioButton, QButtonGroup, QDialog,
-    QScrollArea, QStackedWidget
+    QScrollArea, QStackedWidget, QStyledItemDelegate, QStyle
 )
-from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import Qt, QThread, Signal, QSize, QTimer, QRect
+from PySide6.QtGui import QFont, QColor, QPalette, QTextDocument
 
 from core.engine import ComplianceEngine
 
@@ -198,6 +198,85 @@ class DetailsDialog(QDialog):
 
 
 # ============================================================================
+# КАСТОМНЫЙ ДЕЛЕГАТ ДЛЯ МНОГОСТРОЧНОГО ТЕКСТА В QTreeWidget
+# ============================================================================
+
+class MultiLineItemDelegate(QStyledItemDelegate):
+    """Делегат для корректного отображения многострочного текста в ячейках QTreeWidget"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._tree = parent
+    
+    def sizeHint(self, option, index):
+        # Получаем размер подсказки от базового класса
+        size = super().sizeHint(option, index)
+        
+        if index.isValid():
+            # Получаем текст из модели
+            text = index.data(Qt.DisplayRole)
+            if text:
+                # Создаем QTextDocument для расчета высоты с учетом переноса строк
+                doc = QTextDocument()
+                doc.setHtml(text)
+                doc.setTextWidth(option.rect.width())
+                
+                # Рассчитываем высоту с учетом padding
+                height = int(doc.size().height()) + 8  # 4px padding сверху и снизу
+                
+                # Учитываем высоту иконки, если она есть
+                if option.decorationSize.isValid():
+                    icon_height = option.decorationSize.height()
+                    height = max(height, icon_height + 8)
+                
+                size.setHeight(height)
+        
+        return size
+    
+    def paint(self, painter, option, index):
+        # Сохраняем состояние painter
+        painter.save()
+        
+        # Настраиваем цвета фона и выделения
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+            painter.setPen(option.palette.highlightedText().color())
+        elif option.state & QStyle.State_MouseOver:
+            # Цвет при наведении
+            hover_color = QColor("#3c3c3c")
+            painter.fillRect(option.rect, hover_color)
+            painter.setPen(option.palette.text().color())
+        else:
+            painter.setPen(option.palette.text().color())
+        
+        # Получаем текст
+        text = index.data(Qt.DisplayRole)
+        if not text:
+            painter.restore()
+            return
+        
+        # Создаем QTextDocument для рендеринга текста с переносом
+        doc = QTextDocument()
+        doc.setHtml(text)
+        doc.setTextWidth(option.rect.width() - 8)  # Учитываем padding
+        
+        # Смещаем документ внутрь ячейки с padding
+        painter.translate(option.rect.left() + 4, option.rect.top() + 4)
+        
+        # Рисуем текст
+        doc.drawContents(painter)
+        
+        # Восстанавливаем состояние painter
+        painter.restore()
+    
+    def initStyleOption(self, option, index):
+        # Вызываем базовую реализацию
+        super().initStyleOption(option, index)
+        # Отключаем стандартное отображение текста, так как мы рисуем его сами
+        option.text = ""
+
+
+# ============================================================================
 # ОСНОВНОЕ ОКНО ПРИЛОЖЕНИЯ
 # ============================================================================
 
@@ -326,27 +405,67 @@ class ComplianceCheckerWindow(QMainWindow):
         
         # --- Вкладка 2: Результаты ---
         self.results_tree = QTreeWidget()
+        self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
+        self.results_tree.setAlternatingRowColors(True)
+        self.results_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        
+        # Настройки для переноса строк и отображения многострочного текста
         self.results_tree.setWordWrap(True)
         self.results_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.results_tree.setItemsExpandable(False)
-        self.results_tree.setUniformRowHeights(False)
+        self.results_tree.setUniformRowHeights(True)  # Важно: True для корректного переноса
         self.results_tree.setIndentation(0)
         self.results_tree.setRootIsDecorated(False)
+        self.results_tree.setExpandsOnDoubleClick(False)
+        
+        # Устанавливаем кастомный делегат для правильного рендеринга многострочного текста
+        self.results_tree.setItemDelegate(MultiLineItemDelegate(self.results_tree))
+        
         # Разрешаем последнему столбцу растягиваться
         self.results_tree.header().setStretchLastSection(True)
         # Убираем минимальную ширину, чтобы избежать нежелательных отступов
         self.results_tree.header().setMinimumSectionSize(0)
-        self.results_tree.setStyleSheet("QTreeWidget::item { white-space: normal; }")
+        
+        # Стиль для корректного отображения многострочного текста
+        self.results_tree.setStyleSheet("""
+            QTreeWidget {
+                font-size: 13px;
+                show-decoration-selected: 1;
+            }
+            QTreeWidget::item { 
+                padding: 4px 2px;
+                border: none;
+            }
+            QTreeWidget::item:hover {
+                background-color: #3c3c3c;
+            }
+            QHeaderView::section {
+                background-color: #2b2b2b;
+                color: #e0e0e0;
+                padding: 4px;
+                border: 1px solid #3c3c3c;
+                font-weight: bold;
+            }
+        """)
+        
         # Первые три столбца можно изменять вручную, четвёртый — растягивается
         self.results_tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(1, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
         
-        self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
-        self.results_tree.setAlternatingRowColors(True)
-        self.results_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
+        # Устанавливаем начальную ширину для первых трёх столбцов
+        self.results_tree.setColumnWidth(0, 400)  # Проверка
+        self.results_tree.setColumnWidth(1, 150)  # Статус
+        self.results_tree.setColumnWidth(2, 200)  # Значение
+        
         self.tab_widget.addTab(self.results_tree, "📋 Результаты")
+        
+        # Применяем начальную ширину столбцов после добавления вкладки
+        QTimer.singleShot(50, self._resize_columns)
+        
+        # Обновляем ширину столбцов при переключении на вкладку с результатами
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
         
         # --- Вкладка 3: Лог ---
         self.log_text = QTextEdit()
@@ -361,6 +480,9 @@ class ComplianceCheckerWindow(QMainWindow):
         self.status_bar.showMessage("Готов к проверке. Выберите уровень, тип проверок и нажмите «Начать проверку»")
         
         self.summary_stacked.setCurrentIndex(0)
+        
+        # Применяем ширину столбцов при первом показе окна
+        QTimer.singleShot(100, self._resize_columns)
 
     def _resize_columns(self):
         # Получаем ширину видимой области дерева
@@ -375,6 +497,14 @@ class ComplianceCheckerWindow(QMainWindow):
         for col, ratio in enumerate(widths):
             self.results_tree.setColumnWidth(col, int(total_width * ratio))
         # Четвёртый столбец растягивается автоматически (setStretchLastSection)
+        # Принудительно обновляем заголовок таблицы
+        self.results_tree.header().updateGeometry()
+        self.results_tree.updateGeometry()
+
+    def _on_tab_changed(self, index):
+        # Если переключились на вкладку с результатами (индекс 1), применяем ширину столбцов
+        if index == 1:
+            QTimer.singleShot(50, self._resize_columns)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -661,16 +791,37 @@ class ComplianceCheckerWindow(QMainWindow):
             self.results.append(result)
         status_text = "✅ Пройдено" if result['status'] else "❌ Не пройдено"
         item = QTreeWidgetItem()
-        item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
-        item.setText(1, status_text)
-        item.setText(2, str(result.get('value', '')))
+        
+        # Устанавливаем текст с включенным переносом строк
+        name_text = f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}"
+        value_text = str(result.get('value', ''))
         rec = result.get('message', '')
         if not rec and not result['status']:
             rec = "Требуется настройка"
+        
+        item.setText(0, name_text)
+        item.setText(1, status_text)
+        item.setText(2, value_text)
         item.setText(3, rec)
+        
+        # Включаем перенос строк для каждого столбца через флаги
+        item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        
+        # Устанавливаем текст как богатый текст (rich text) для поддержки переноса
+        for col in range(4):
+            item.setText(col, item.text(col))
+        
         self.results_tree.addTopLevelItem(item)
         self.results_tree.scheduleDelayedItemsLayout()
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
+        
+        # Обновляем геометрию после добавления элемента для корректного переноса
+        QTimer.singleShot(50, self._update_item_geometry)
+    
+    def _update_item_geometry(self):
+        """Принудительно обновляет геометрию элементов для корректного переноса строк"""
+        self.results_tree.updateGeometry()
+        self.results_tree.repaint()
 
     def _on_item_double_clicked(self, item, column):
         # Пропускаем заголовки групп
@@ -773,6 +924,8 @@ class ComplianceCheckerWindow(QMainWindow):
             item = self.results_tree.topLevelItem(i)
             for col in range(self.results_tree.columnCount()):
                 item.setSizeHint(col, self.results_tree.sizeHintForIndex(self.results_tree.indexFromItem(item, col)))
+        # Принудительно применяем ширину столбцов после заполнения таблицы
+        QTimer.singleShot(50, self._resize_columns)
         self._update_summary()
         real_results = [r for r in self.results if r.get('status') is not None]
         passed = sum(1 for r in real_results if r['status'])
