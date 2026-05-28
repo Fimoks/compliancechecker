@@ -240,14 +240,15 @@ class MultiLineItemDelegate(QStyledItemDelegate):
         # Настраиваем цвета фона и выделения
         if option.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
-            painter.setPen(option.palette.highlightedText().color())
+            text_color = option.palette.highlightedText().color()
         elif option.state & QStyle.State_MouseOver:
             # Цвет при наведении
             hover_color = QColor("#3c3c3c")
             painter.fillRect(option.rect, hover_color)
-            painter.setPen(option.palette.text().color())
+            text_color = QColor("#e0e0e0")
         else:
-            painter.setPen(option.palette.text().color())
+            # Обычный фон - используем светлый цвет текста для темной темы
+            text_color = QColor("#e0e0e0")
         
         # Получаем текст
         text = index.data(Qt.DisplayRole)
@@ -257,7 +258,7 @@ class MultiLineItemDelegate(QStyledItemDelegate):
         
         # Создаем QTextDocument для рендеринга текста с переносом
         doc = QTextDocument()
-        doc.setHtml(text)
+        doc.setHtml(f"<span style='color: {text_color.name()}'>{text}</span>")
         doc.setTextWidth(option.rect.width() - 8)  # Учитываем padding
         
         # Смещаем документ внутрь ячейки с padding
@@ -413,13 +414,15 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.setWordWrap(True)
         self.results_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.results_tree.setItemsExpandable(False)
-        self.results_tree.setUniformRowHeights(True)  # Важно: True для корректного переноса
+        self.results_tree.setUniformRowHeights(False)  # Важно: False для корректного переноса строк разной высоты
         self.results_tree.setIndentation(0)
         self.results_tree.setRootIsDecorated(False)
         self.results_tree.setExpandsOnDoubleClick(False)
+        self.results_tree.setAnimated(False)  # Отключаем анимацию для лучшей производительности
         
         # Устанавливаем кастомный делегат для правильного рендеринга многострочного текста
-        self.results_tree.setItemDelegate(MultiLineItemDelegate(self.results_tree))
+        delegate = MultiLineItemDelegate(self.results_tree)
+        self.results_tree.setItemDelegate(delegate)
         
         # Разрешаем последнему столбцу растягиваться
         self.results_tree.header().setStretchLastSection(True)
@@ -431,13 +434,19 @@ class ComplianceCheckerWindow(QMainWindow):
             QTreeWidget {
                 font-size: 13px;
                 show-decoration-selected: 1;
+                background-color: transparent;
             }
             QTreeWidget::item { 
                 padding: 4px 2px;
                 border: none;
+                color: #e0e0e0;
             }
             QTreeWidget::item:hover {
                 background-color: #3c3c3c;
+            }
+            QTreeWidget::item:selected {
+                background-color: #145a7a;
+                color: #ffffff;
             }
             QHeaderView::section {
                 background-color: #2b2b2b;
@@ -781,6 +790,7 @@ class ComplianceCheckerWindow(QMainWindow):
         item.setFont(0, font)
         for col in range(self.results_tree.columnCount()):
             item.setBackground(col, QColor(60, 60, 80))
+            item.setForeground(col, QColor("#e0e0e0"))  # Светлый текст для заголовков
         # Занимает всю строку
         item.setFirstColumnSpanned(True)
         self.results_tree.addTopLevelItem(item)
@@ -820,8 +830,33 @@ class ComplianceCheckerWindow(QMainWindow):
     
     def _update_item_geometry(self):
         """Принудительно обновляет геометрию элементов для корректного переноса строк"""
+        # Проходим по всем элементам и принудительно устанавливаем размер подсказки для каждой ячейки
+        for i in range(self.results_tree.topLevelItemCount()):
+            item = self.results_tree.topLevelItem(i)
+            for col in range(4):
+                # Получаем индекс элемента и вызываем sizeHintForIndex для пересчета высоты
+                index = self.results_tree.indexFromItem(item, col)
+                size_hint = self.results_tree.sizeHintForIndex(index)
+                if size_hint.isValid():
+                    item.setSizeHint(col, size_hint)
+        
+        # Принудительно вызываем resizeColumnToContents для пересчета высоты строк
+        self.results_tree.resizeColumnToContents(0)
+        self.results_tree.resizeColumnToContents(1)
+        self.results_tree.resizeColumnToContents(2)
+        self.results_tree.resizeColumnToContents(3)
         self.results_tree.updateGeometry()
         self.results_tree.repaint()
+        
+        # Дополнительный вызов через таймер для полной отрисовки
+        QTimer.singleShot(100, self._final_layout_update)
+    
+    def _final_layout_update(self):
+        """Финальное обновление макета для гарантии корректного отображения"""
+        # Пересчитываем размеры всех строк заново
+        self.results_tree.reset()
+        self.results_tree.update()
+        self.results_tree.viewport().update()
 
     def _on_item_double_clicked(self, item, column):
         # Пропускаем заголовки групп
