@@ -343,11 +343,21 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
         
+        # Устанавливаем начальную ширину для первых трёх столбцов
+        self.results_tree.setColumnWidth(0, 400)  # Проверка
+        self.results_tree.setColumnWidth(1, 150)  # Статус
+        self.results_tree.setColumnWidth(2, 200)  # Значение
         self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
         self.results_tree.setAlternatingRowColors(True)
         self.results_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.tab_widget.addTab(self.results_tree, "📋 Результаты")
         
+        # Применяем начальную ширину столбцов после добавления вкладки
+        QTimer.singleShot(50, self._resize_columns)
+
+        # Обновляем ширину столбцов при переключении на вкладку с результатами
+        self.tab_widget.currentChanged.connect(self._on_tab_changed)
+
         # --- Вкладка 3: Лог ---
         self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
@@ -362,6 +372,10 @@ class ComplianceCheckerWindow(QMainWindow):
         
         self.summary_stacked.setCurrentIndex(0)
 
+        # Применяем ширину столбцов при первом показе окна
+        QTimer.singleShot(100, self._resize_columns)
+
+
     def _resize_columns(self):
         # Получаем ширину видимой области дерева
         total_width = self.results_tree.viewport().width()
@@ -375,6 +389,15 @@ class ComplianceCheckerWindow(QMainWindow):
         for col, ratio in enumerate(widths):
             self.results_tree.setColumnWidth(col, int(total_width * ratio))
         # Четвёртый столбец растягивается автоматически (setStretchLastSection)
+
+        # Принудительно обновляем заголовок таблицы
+        self.results_tree.header().updateGeometry()
+        self.results_tree.updateGeometry()
+
+    def _on_tab_changed(self, index):
+        # Если переключились на вкладку с результатами (индекс 1), применяем ширину столбцов
+        if index == 1:
+            QTimer.singleShot(50, self._resize_columns)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -773,6 +796,8 @@ class ComplianceCheckerWindow(QMainWindow):
             item = self.results_tree.topLevelItem(i)
             for col in range(self.results_tree.columnCount()):
                 item.setSizeHint(col, self.results_tree.sizeHintForIndex(self.results_tree.indexFromItem(item, col)))
+        # Принудительно применяем ширину столбцов после заполнения таблицы
+        QTimer.singleShot(50, self._resize_columns)
         self._update_summary()
         real_results = [r for r in self.results if r.get('status') is not None]
         passed = sum(1 for r in real_results if r['status'])
