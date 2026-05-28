@@ -246,6 +246,14 @@ class ComplianceCheckerWindow(QMainWindow):
         self._setup_ui()
         self._apply_styles()
 
+    def _set_status_color(self, item, status):
+        """Устанавливает цвет фона только для столбца 'Статус'"""
+        if status:
+            color = QColor(76, 175, 80, 50)  # пастельно-зеленый
+        else:
+            color = QColor(244, 67, 54, 50)  # пастельно-красный
+        item.setBackground(3, color)  # столбец 3 - это "Статус" (после перемещения)
+    
     def _setup_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
@@ -332,30 +340,31 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.setUniformRowHeights(False)
         self.results_tree.setIndentation(0)
         self.results_tree.setRootIsDecorated(False)
-        # Разрешаем последнему столбцу растягиваться
         self.results_tree.header().setStretchLastSection(True)
-        # Убираем минимальную ширину, чтобы избежать нежелательных отступов
         self.results_tree.header().setMinimumSectionSize(0)
         self.results_tree.setStyleSheet("QTreeWidget::item { white-space: normal; }")
-        # Первые три столбца можно изменять вручную, четвёртый — растягивается
         self.results_tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(1, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
         
-        # Устанавливаем начальную ширину для первых трёх столбцов
-        self.results_tree.setColumnWidth(0, 400)  # Проверка
-        self.results_tree.setColumnWidth(1, 150)  # Статус
-        self.results_tree.setColumnWidth(2, 200)  # Значение
-        self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
+        # Устанавливаем заголовки столбцов в новом порядке: Проверка, Значение, Рекомендация, Статус
+        self.results_tree.setHeaderLabels(["Проверка", "Значение", "Рекомендация", "Статус"])
+        
+        # Устанавливаем начальную ширину столбцов (в новом порядке)
+        self.results_tree.setColumnWidth(0, 350)  # Проверка
+        self.results_tree.setColumnWidth(1, 200)  # Значение
+        self.results_tree.setColumnWidth(2, 300)  # Рекомендация
+        self.results_tree.setColumnWidth(3, 100)  # Статус
+        
+        # Выравниваем заголовки по центру
+        self.results_tree.header().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
+        
         self.results_tree.setAlternatingRowColors(True)
         self.results_tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self.tab_widget.addTab(self.results_tree, "📋 Результаты")
         
-        # Применяем начальную ширину столбцов после добавления вкладки
         QTimer.singleShot(50, self._resize_columns)
-
-        # Обновляем ширину столбцов при переключении на вкладку с результатами
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
 
         # --- Вкладка 3: Лог ---
@@ -371,31 +380,22 @@ class ComplianceCheckerWindow(QMainWindow):
         self.status_bar.showMessage("Готов к проверке. Выберите уровень, тип проверок и нажмите «Начать проверку»")
         
         self.summary_stacked.setCurrentIndex(0)
-
-        # Применяем ширину столбцов при первом показе окна
         QTimer.singleShot(100, self._resize_columns)
 
-
     def _resize_columns(self):
-        # Получаем ширину видимой области дерева
         total_width = self.results_tree.viewport().width()
         if total_width <= 0:
-            # Если дерево ещё не отрисовано, используем ширину окна
             total_width = self.width() - 50
             if total_width < 200:
                 total_width = 1000
-        # Устанавливаем пропорциональную ширину для первых трёх столбцов
-        widths = [0.40, 0.15, 0.20]  # 40%, 15%, 20%
+        # Пропорции для нового порядка столбцов: [Проверка, Значение, Рекомендация, Статус]
+        widths = [0.35, 0.20, 0.30, 0.15]  # 35%, 20%, 30%, 15%
         for col, ratio in enumerate(widths):
             self.results_tree.setColumnWidth(col, int(total_width * ratio))
-        # Четвёртый столбец растягивается автоматически (setStretchLastSection)
-
-        # Принудительно обновляем заголовок таблицы
         self.results_tree.header().updateGeometry()
         self.results_tree.updateGeometry()
 
     def _on_tab_changed(self, index):
-        # Если переключились на вкладку с результатами (индекс 1), применяем ширину столбцов
         if index == 1:
             QTimer.singleShot(50, self._resize_columns)
 
@@ -405,7 +405,6 @@ class ComplianceCheckerWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # Небольшая задержка для полной отрисовки
         QTimer.singleShot(50, self._resize_columns)
 
     def _setup_level_selector(self, layout):
@@ -526,6 +525,7 @@ class ComplianceCheckerWindow(QMainWindow):
             QTreeWidget::item { padding: 5px; }
             QTreeWidget::item:selected { background-color: #0d7377; }
             QHeaderView::section { background-color: #3c3c3c; color: white; padding: 5px; border: none; }
+            QHeaderView::section { text-align: center; }
             QTabWidget::pane { background-color: #1e1e1e; border: 1px solid #3c3c3c; }
             QTabBar::tab { background-color: #3c3c3c; color: white; padding: 8px 15px; margin-right: 2px; }
             QTabBar::tab:selected { background-color: #0d7377; }
@@ -674,7 +674,6 @@ class ComplianceCheckerWindow(QMainWindow):
         item.setFont(0, font)
         for col in range(self.results_tree.columnCount()):
             item.setBackground(col, QColor(60, 60, 80))
-        # Занимает всю строку
         item.setFirstColumnSpanned(True)
         self.results_tree.addTopLevelItem(item)
         self.results_tree.scheduleDelayedItemsLayout()
@@ -682,29 +681,33 @@ class ComplianceCheckerWindow(QMainWindow):
     def _add_result_item(self, result, add_to_list=False):
         if add_to_list:
             self.results.append(result)
-        status_text = "✅ Пройдено" if result['status'] else "❌ Не пройдено"
+        status_text = "Пройдено" if result['status'] else "Не пройдено"
         item = QTreeWidgetItem()
         item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
-        item.setText(1, status_text)
-        item.setText(2, str(result.get('value', '')))
+        item.setText(1, str(result.get('value', '')))  # Значение
         rec = result.get('message', '')
         if not rec and not result['status']:
             rec = "Требуется настройка"
-        item.setText(3, rec)
+        item.setText(2, rec)  # Рекомендация
+        item.setText(3, status_text)  # Статус
         self.results_tree.addTopLevelItem(item)
+        
+        # Выравниваем текст в столбце "Статус" по центру
+        item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter)
+        
+        self._set_status_color(item, result['status'])
         self.results_tree.scheduleDelayedItemsLayout()
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
 
     def _on_item_double_clicked(self, item, column):
         # Пропускаем заголовки групп
-        if item.text(1) == "" and item.text(2) == "" and item.text(3) == "":
+        if item.text(3) == "" and item.text(1) == "" and item.text(2) == "":
             return
         item_text = item.text(0)
         if ":" in item_text:
             check_id = item_text.split(":")[0].strip()
         else:
             check_id = item_text
-        # Ищем результат в self.results
         result = None
         for r in self.results:
             if r.get('id') == check_id:
@@ -714,7 +717,7 @@ class ComplianceCheckerWindow(QMainWindow):
             return
         details = f"""ID: {result.get('id', '???')}
 Название: {result.get('name', 'Неизвестно')}
-Статус: {'✅ Пройдено' if result.get('status') else '❌ Не пройдено'}
+Статус: {'Пройдено' if result.get('status') else 'Не пройдено'}
 Значение:
 {result.get('value', '')}
 
@@ -796,7 +799,6 @@ class ComplianceCheckerWindow(QMainWindow):
             item = self.results_tree.topLevelItem(i)
             for col in range(self.results_tree.columnCount()):
                 item.setSizeHint(col, self.results_tree.sizeHintForIndex(self.results_tree.indexFromItem(item, col)))
-        # Принудительно применяем ширину столбцов после заполнения таблицы
         QTimer.singleShot(50, self._resize_columns)
         self._update_summary()
         real_results = [r for r in self.results if r.get('status') is not None]
