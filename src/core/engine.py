@@ -1,5 +1,3 @@
-# src/core/engine.py
-
 import sys
 import os
 
@@ -7,6 +5,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.checks.iaf_checks import get_iaf_checkers
 from core.checks.upd_checks import get_upd_checkers
+from core.checks.ops_checks import get_ops_checkers
+from core.checks.zni_checks import get_zni_checkers
+from core.checks.rsb_checks import get_rsb_checkers
+from core.checks.avz_checks import get_avz_checkers
+from core.checks.sov_checks import get_sov_checkers
+from core.checks.anz_checks import get_anz_checkers
+from core.checks.ocl_checks import get_ocl_checkers
+from core.checks.odt_checks import get_odt_checkers
+from core.checks.zsv_checks import get_zsv_checkers
+from core.checks.zts_checks import get_zts_checkers
+from core.checks.zis_checks import get_zis_checkers
+from core.checks.inc_checks import get_inc_checkers
+from core.checks.ukf_checks import get_ukf_checkers
 
 
 class ComplianceEngine:
@@ -21,6 +32,19 @@ class ComplianceEngine:
         all_checkers = []
         all_checkers.extend(get_iaf_checkers())
         all_checkers.extend(get_upd_checkers())
+        all_checkers.extend(get_ops_checkers())
+        all_checkers.extend(get_zni_checkers())
+        all_checkers.extend(get_rsb_checkers())
+        all_checkers.extend(get_avz_checkers())
+        all_checkers.extend(get_sov_checkers())
+        all_checkers.extend(get_anz_checkers())
+        all_checkers.extend(get_ocl_checkers())
+        all_checkers.extend(get_odt_checkers())
+        all_checkers.extend(get_zsv_checkers())
+        all_checkers.extend(get_zts_checkers())
+        all_checkers.extend(get_zis_checkers())
+        all_checkers.extend(get_inc_checkers())
+        all_checkers.extend(get_ukf_checkers())
         
         # Фильтруем по типу (ручные/авто) и по уровню
         for checker in all_checkers:
@@ -49,7 +73,6 @@ class ComplianceEngine:
                 progress_callback(i + 1, total)
             
             try:
-                # Для ручных проверок check() возвращает вопрос
                 results.append(checker.check())
             except Exception as e:
                 results.append({

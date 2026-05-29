@@ -252,7 +252,7 @@ class ComplianceCheckerWindow(QMainWindow):
             color = QColor(76, 175, 80, 50)  # пастельно-зеленый
         else:
             color = QColor(244, 67, 54, 50)  # пастельно-красный
-        item.setBackground(1, color)  # столбец 1 - это "Статус"
+        item.setBackground(3, color)  # столбец 3 - это "Статус" (после перемещения)
     
     def _setup_ui(self):
         central = QWidget()
@@ -348,14 +348,14 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
         self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
         
-        # Устанавливаем заголовки столбцов: Проверка, Статус, Значение, Рекомендация
-        self.results_tree.setHeaderLabels(["Проверка", "Статус", "Значение", "Рекомендация"])
+        # Устанавливаем заголовки столбцов в новом порядке: Проверка, Значение, Рекомендация, Статус
+        self.results_tree.setHeaderLabels(["Проверка", "Значение", "Рекомендация", "Статус"])
         
-        # Устанавливаем начальную ширину столбцов
-        self.results_tree.setColumnWidth(0, 400)  # Проверка
-        self.results_tree.setColumnWidth(1, 100)  # Статус
-        self.results_tree.setColumnWidth(2, 200)  # Значение
-        self.results_tree.setColumnWidth(3, 300)  # Рекомендация
+        # Устанавливаем начальную ширину столбцов (в новом порядке)
+        self.results_tree.setColumnWidth(0, 350)  # Проверка
+        self.results_tree.setColumnWidth(1, 200)  # Значение
+        self.results_tree.setColumnWidth(2, 300)  # Рекомендация
+        self.results_tree.setColumnWidth(3, 100)  # Статус
         
         # Выравниваем заголовки по центру
         self.results_tree.header().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -388,8 +388,8 @@ class ComplianceCheckerWindow(QMainWindow):
             total_width = self.width() - 50
             if total_width < 200:
                 total_width = 1000
-        # Пропорции: [Проверка, Статус, Значение, Рекомендация]
-        widths = [0.40, 0.10, 0.20, 0.30]  # 40%, 10%, 20%, 30%
+        # Пропорции для нового порядка столбцов: [Проверка, Значение, Рекомендация, Статус]
+        widths = [0.35, 0.20, 0.30, 0.15]  # 35%, 20%, 30%, 15%
         for col, ratio in enumerate(widths):
             self.results_tree.setColumnWidth(col, int(total_width * ratio))
         self.results_tree.header().updateGeometry()
@@ -672,8 +672,6 @@ class ComplianceCheckerWindow(QMainWindow):
         font = QFont()
         font.setBold(True)
         item.setFont(0, font)
-        # Выравнивание текста заголовка по центру строки
-        item.setTextAlignment(0, Qt.AlignmentFlag.AlignCenter)
         for col in range(self.results_tree.columnCount()):
             item.setBackground(col, QColor(60, 60, 80))
         item.setFirstColumnSpanned(True)
@@ -686,16 +684,16 @@ class ComplianceCheckerWindow(QMainWindow):
         status_text = "Пройдено" if result['status'] else "Не пройдено"
         item = QTreeWidgetItem()
         item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
-        item.setText(1, status_text)
-        item.setText(2, str(result.get('value', '')))
+        item.setText(1, str(result.get('value', '')))  # Значение
         rec = result.get('message', '')
         if not rec and not result['status']:
             rec = "Требуется настройка"
-        item.setText(3, rec)
+        item.setText(2, rec)  # Рекомендация
+        item.setText(3, status_text)  # Статус
         self.results_tree.addTopLevelItem(item)
         
-        # Выравнивание текста в столбце "Статус" по центру
-        item.setTextAlignment(1, Qt.AlignmentFlag.AlignCenter)
+        # Выравниваем текст в столбце "Статус" по центру
+        item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter)
         
         self._set_status_color(item, result['status'])
         self.results_tree.scheduleDelayedItemsLayout()
@@ -703,7 +701,7 @@ class ComplianceCheckerWindow(QMainWindow):
 
     def _on_item_double_clicked(self, item, column):
         # Пропускаем заголовки групп
-        if item.text(1) == "" and item.text(2) == "" and item.text(3) == "":
+        if item.text(3) == "" and item.text(1) == "" and item.text(2) == "":
             return
         item_text = item.text(0)
         if ":" in item_text:
