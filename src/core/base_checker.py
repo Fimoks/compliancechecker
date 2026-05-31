@@ -1,3 +1,5 @@
+# base_checker.py
+
 from abc import ABC, abstractmethod
 
 class BaseChecker(ABC):

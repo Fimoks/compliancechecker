@@ -1,3 +1,5 @@
+# main_window.py
+
 import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -268,6 +270,13 @@ class ComplianceCheckerWindow(QMainWindow):
         about_btn = QPushButton("📖 О программе")
         about_btn.clicked.connect(self._show_about)
         header.addWidget(about_btn)
+        
+        # Новая кнопка для сохранения Акта
+        self.act_btn = QPushButton("📄 Сохранить Акт")
+        self.act_btn.setEnabled(False)  # сначала неактивна, пока нет результатов
+        self.act_btn.clicked.connect(self._save_act)
+        header.addWidget(self.act_btn)
+        
         layout.addLayout(header)
 
         settings_layout = QHBoxLayout()
@@ -599,6 +608,43 @@ class ComplianceCheckerWindow(QMainWindow):
             "Программа автоматической проверки защищённости рабочей станции\n"
             "на соответствие требованиям 152-ФЗ и Приказа ФСТЭК №21.\n\n"
             "Разработано для магистерской диссертации\n© 2026")
+    
+    def _save_act(self):
+        """Сохраняет Акт о готовности АРМ к работе с ПДн"""
+        from datetime import datetime
+        from reporting.act_generator import ActGenerator
+        
+        if not self.results:
+            QMessageBox.warning(self, "Нет данных", 
+                "Сначала выполните проверку")
+            return
+        
+        try:
+            # Фильтруем только реальные результаты (не заглушки)
+            real_results = [r for r in self.results if r.get('status') is not None]
+            
+            generator = ActGenerator(
+                results=real_results,
+                security_level=self.security_level,
+                system_info={
+                    'computer_name': os.environ.get('COMPUTERNAME', 'UNKNOWN'),
+                    'user_name': os.environ.get('USERNAME', 'UNKNOWN'),
+                    'os': 'Windows',
+                    'check_date': datetime.now().strftime("%d.%m.%Y"),
+                    'check_time': datetime.now().strftime("%H:%M:%S")
+                }
+            )
+            
+            output_path = generator.generate()
+            
+            QMessageBox.information(self, "Акт сохранён", 
+                f"Акт о готовности АРМ сохранён в файл:\n{output_path}")
+            self._log(f"Акт сохранён: {output_path}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", 
+                f"Не удалось сохранить Акт:\n{str(e)}")
+            self._log(f"Ошибка сохранения Акта: {str(e)}")
 
     def _start_check(self):
         self._check_finished_flag = False
@@ -815,6 +861,10 @@ class ComplianceCheckerWindow(QMainWindow):
                     self._log(f"  • {r.get('id', '???')}: {r.get('message', '')[:100]}")
         self._log("=" * 50)
         QApplication.processEvents()
+        
+        # Активируем кнопку сохранения Акта (теперь есть результаты)
+        self.act_btn.setEnabled(True)
+        
         if self.include_manual_checks:
             self._show_manual_checks_dialog()
 
