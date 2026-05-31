@@ -9,11 +9,11 @@ class BaseChecker(ABC):
         self.severity = severity
         self.is_manual = is_manual
         self.required_levels = [1, 2, 3, 4]
-        self.question = None  # для ручных проверок (будет переопределён)
+        self.question = None  # для ручных проверок
+        self.detailed_description = ""  # подробное описание меры, рекомендации
 
     @abstractmethod
     def check(self) -> dict:
-        """Для ручных проверок можно вернуть заглушку с вопросом"""
         pass
 
     def _get_result(self, status: bool, value: any, message: str = "") -> dict:
@@ -25,5 +25,6 @@ class BaseChecker(ABC):
             'message': message or ("OK" if status else "Требование не выполнено"),
             'severity': self.severity,
             'is_manual': self.is_manual,
-            'question': self.question if self.is_manual else None
+            'question': self.question if self.is_manual else None,
+            'detailed_description': self.detailed_description  # добавляем описание
         }

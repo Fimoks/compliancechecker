@@ -1,6 +1,7 @@
 import winreg
 import subprocess
 import ctypes
+import re
 from core.base_checker import BaseChecker
 
 # ============================================================================
@@ -24,129 +25,184 @@ def is_user_admin():
 
 
 # ============================================================================
-# ИАФ.1 — АВТОМАТИЧЕСКАЯ (все уровни)
+# ИАФ.1 — ИДЕНТИФИКАЦИЯ И АУТЕНТИФИКАЦИЯ РАБОТНИКОВ
 # ============================================================================
 
 class IAF1Checker(BaseChecker):
     def __init__(self):
         super().__init__("ИАФ.1", "Идентификация и аутентификация работников", "critical", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
+        self.detailed_description = r"""
+📌 ЧТО ПРОВЕРЯЕТСЯ:
+Данная проверка контролирует три критических аспекта аутентификации пользователей:
+1. Отключён ли автоматический вход в систему (AutoAdminLogon)
+2. Отключена ли гостевая учётная запись
+3. Не работает ли пользователь с правами администратора без необходимости
+
+✅ ПОЧЕМУ ЭТО ВАЖНО:
+- Автоматический вход позволяет любому, кто получил физический доступ к компьютеру, войти в систему без пароля
+- Гостевая учётная запись даёт неавторизованный доступ к системе без аутентификации
+- Работа с правами администратора повышает риск заражения вредоносным ПО и несанкционированных изменений
+
+📋 НОРМАТИВНОЕ ТРЕБОВАНИЕ (Приказ ФСТЭК №21 п. I):
+Каждый пользователь должен быть идентифицирован и аутентифицирован перед получением доступа к информационной системе. Неиспользуемые учётные записи должны быть отключены. Пользователи не должны обладать избыточными привилегиями.
+
+🛠️ КАК ИСПРАВИТЬ:
+
+АВТОВХОД:
+1. Нажмите Win+R, введите netplwiz
+2. Уберите галочку "Требовать ввод имени и пароля"
+3. Нажмите "Применить" и введите пароль текущего пользователя
+ИЛИ через реестр:
+- Откройте regedit
+- Перейдите к HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon
+- Удалите или установите в "0" параметр AutoAdminLogon
+
+ГОСТЕВАЯ УЧЁТНАЯ ЗАПИСЬ:
+1. Откройте lusrmgr.msc (Win+R)
+2. Перейдите в "Пользователи"
+3. Дважды кликните по "Гость"
+4. Поставьте галочку "Отключить учётную запись"
+ИЛИ через PowerShell (от администратора):
+Disable-LocalUser -Name "Guest"
+
+ПРАВА АДМИНИСТРАТОРА:
+1. Создайте отдельную учётную запись для повседневной работы
+2. Используйте учётную запись администратора только для администрирования
+3. Включите Control Access (UAC) на максимальный уровень
+
+📊 ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ:
+- Внедрите многофакторную аутентификацию (MFA) для критических систем
+- Регулярно проводите аудит учётных записей
+- Используйте отдельные учётные записи для разных ролей
+"""
     
     def check(self) -> dict:
         results = []
+        # Проверка автовхода
         auto_logon = get_registry_value(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "AutoAdminLogon")
         auto_logon_enabled = (auto_logon == "1")
         results.append(("✅" if not auto_logon_enabled else "❌", "Автовход", not auto_logon_enabled))
+        
+        # Проверка гостевой учётной записи
         guest_status = get_registry_value(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon\SpecialAccounts\UserList", "Guest")
         guest_disabled = (guest_status == 0 or guest_status is None)
-        results.append(("✅" if guest_disabled else "❌", "Гостевая учётка", guest_disabled))
+        results.append(("✅" if guest_disabled else "❌", "Гостевая учётка отключена", guest_disabled))
+        
+        # Проверка прав администратора
         admin_ok = not is_user_admin()
-        results.append(("⚠️" if not admin_ok else "✅", "Пользователь не админ", admin_ok))
+        if admin_ok:
+            results.append(("✅", "Пользователь без прав администратора", True))
+        else:
+            results.append(("⚠️", "Пользователь с правами администратора", False))
+        
         status = all(r[2] for r in results)
-        return self._get_result(status, value="\n".join([f"{s} {t}" for s, t, _ in results]))
+        
+        # Формируем понятное сообщение
+        if not status:
+            message_parts = []
+            if auto_logon_enabled:
+                message_parts.append("Включён автоматический вход в систему (небезопасно). Отключите через netplwiz")
+            if not guest_disabled:
+                message_parts.append("Гостевая учётная запись включена. Отключите через lusrmgr.msc")
+            if not admin_ok:
+                message_parts.append("Вы работаете под учётной записью администратора. Создайте обычную учётную запись для повседневной работы")
+            message = "; ".join(message_parts)
+        else:
+            message = "Автовход отключён, гостевая учётная запись отключена, пользователь не имеет прав администратора"
+        
+        return self._get_result(status, value="\n".join([f"{s} {t}" for s, t, _ in results]), message=message)
 
 
 # ============================================================================
-# ИАФ.2 — РУЧНАЯ (только уровни 1 и 2)
+# ИАФ.2 — ИДЕНТИФИКАЦИЯ И АУТЕНТИФИКАЦИЯ УСТРОЙСТВ (ручная)
 # ============================================================================
 
 class IAF2Checker(BaseChecker):
     def __init__(self):
         super().__init__("ИАФ.2", "Идентификация и аутентификация устройств", "high", is_manual=True)
-        self.required_levels = [1, 2]   # по таблице: плюсы только для УЗ-1 и УЗ-2
-        self.question = "Настроена ли аутентификация устройств в вашей сети (802.1X)?"
+        self.required_levels = [1, 2]   # по таблице: только для УЗ-1 и УЗ-2
+        self.question = "Настроена ли аутентификация устройств в вашей сети (802.1X, сертификаты, MAC-фильтрация)?"
+        self.detailed_description = r"""
+📌 ЧТО ПРОВЕРЯЕТСЯ:
+Данная проверка требует от администратора подтвердить, что в организации настроена аутентификация устройств при подключении к сети.
+
+✅ ПОЧЕМУ ЭТО ВАЖНО:
+- Предотвращает подключение несанкционированных устройств к корпоративной сети
+- Защищает от атак типа "злой близнец" (evil twin) в Wi-Fi сетях
+- Обеспечивает, что только доверенные компьютеры и устройства получают доступ к персональным данным
+
+📋 НОРМАТИВНОЕ ТРЕБОВАНИЕ (Приказ ФСТЭК №21 п. I, мера 2):
+Должна быть реализована идентификация и аутентификация устройств, подключаемых к информационной системе, с использованием сертификатов, 802.1X или иных методов.
+
+🛠️ КАК ОРГАНИЗОВАТЬ (требуется участие системного администратора):
+
+Способ 1: 802.1X (рекомендуется)
+1. Разверните RADIUS-сервер (например, Microsoft NPS или FreeRADIUS)
+2. Настройте коммутаторы и точки доступа на использование 802.1X
+3. Выдайте сертификаты всем устройствам (через AD Certificate Services)
+4. Настройте политики доступа на RADIUS-сервере
+
+Способ 2: MAC-фильтрация (менее безопасный)
+1. Составьте список MAC-адресов доверенных устройств
+2. Настройте фильтрацию на коммутаторах/точках доступа
+
+Способ 3: Сертификаты компьютеров в домене
+1. Разверните корпоративный центр сертификации (AD CS)
+2. Настройте автоматическую выдачу сертификатов компьютерам
+3. Настройте политики доступа на основе наличия сертификата
+
+📊 ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ:
+- Для УЗ-1 и УЗ-2 использование 802.1X с сертификатами обязательно
+- Регулярно обновляйте списки разрешённых устройств
+- Внедрите систему обнаружения новых устройств (NAC)
+"""
     
     def check(self) -> dict:
         return self._get_result(False, None, self.question)
 
 
 # ============================================================================
-# ИАФ.3 — АВТОМАТИЧЕСКАЯ (все уровни)
+# ИАФ.3 — УПРАВЛЕНИЕ ИДЕНТИФИКАТОРАМИ
 # ============================================================================
 
 class IAF3Checker(BaseChecker):
     def __init__(self):
-        super().__init__("ИАФ.3", "Управление идентификаторами", "high", is_manual=False)
+        super().__init__("ИАФ.3", "Управление идентификаторами (учётные записи без пароля)", "high", is_manual=False)
         self.required_levels = [1, 2, 3, 4]
-    
-    def check(self) -> dict:
-        try:
-            result = subprocess.run(['net', 'user'], capture_output=True, text=True, encoding='cp866', errors='replace')
-            users = []
-            for line in result.stdout.split('\n'):
-                if line.strip() and not line.startswith('-') and not line.startswith('Команда'):
-                    for word in line.split():
-                        if word and word[0].isalnum() and len(word) > 1:
-                            users.append(word.lower())
-            without = []
-            for user in users:
-                if user.lower() in ['guest', 'defaultaccount', 'wdagutilityaccount']:
-                    continue
-                check = subprocess.run(['net', 'user', user], capture_output=True, text=True, encoding='cp866', errors='replace')
-                if 'Пароль не задан' in check.stdout:
-                    without.append(user)
-            if without:
-                return self._get_result(False, without, f"Учётные записи без пароля: {', '.join(without)}")
-            return self._get_result(True, "OK", "Все учётные записи защищены паролями")
-        except Exception as e:
-            return self._get_result(False, str(e), f"Ошибка проверки: {e}")
+        self.detailed_description = r"""
+📌 ЧТО ПРОВЕРЯЕТСЯ:
+Данная проверка ищет учётные записи пользователей, для которых не задан пароль.
 
+✅ ПОЧЕМУ ЭТО ВАЖНО:
+- Учётная запись без пароля может быть использована кем угодно для входа в систему
+- Особенно опасно, если такая учётная запись имеет административные привилегии
+- Является критической уязвимостью для информационной системы
 
-# ============================================================================
-# ИАФ.4 — АВТОМАТИЧЕСКАЯ (все уровни)
-# ============================================================================
+📋 НОРМАТИВНОЕ ТРЕБОВАНИЕ (Приказ ФСТЭК №21 п. I, мера 3):
+Все идентификаторы пользователей должны быть защищены средствами аутентификации. Неиспользуемые идентификаторы должны блокироваться.
 
-class IAF4Checker(BaseChecker):
-    def __init__(self):
-        super().__init__("ИАФ.4", "Управление средствами аутентификации (парольная политика)", "critical", is_manual=False)
-        self.required_levels = [1, 2, 3, 4]
-    
-    def check(self) -> dict:
-        results = []
-        min_len = get_registry_value(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Network", "MinPasswordLength") or 0
-        results.append(("✅" if min_len >= 8 else "❌", f"Минимальная длина пароля: {min_len} (требуется ≥8)", min_len >= 8))
-        max_age = 999
-        try:
-            result = subprocess.run(['net', 'accounts'], capture_output=True, text=True, encoding='cp866', errors='replace')
-            import re
-            for line in result.stdout.split('\n'):
-                if 'максимальный срок действия пароля' in line.lower():
-                    nums = re.findall(r'\d+', line)
-                    if nums:
-                        max_age = int(nums[0])
-        except:
-            pass
-        results.append(("✅" if max_age <= 90 else "❌", f"Максимальный срок пароля: {max_age} дней (требуется ≤90)", max_age <= 90))
-        history = get_registry_value(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "PasswordHistorySize") or 0
-        results.append(("✅" if history >= 5 else "❌", f"История паролей: {history} (требуется ≥5)", history >= 5))
-        status = all(r[2] for r in results)
-        return self._get_result(status, value="\n".join([f"{s} {t}" for s, t, _ in results]))
+🛠️ КАК ИСПРАВИТЬ:
+1. Откройте lusrmgr.msc (Win+R)
+2. Перейдите в "Пользователи"
+3. Дважды кликните по учётной записи без пароля
+4. Поставьте галочку "Требовать смену пароля при следующем входе"
+5. Нажмите "ОК"
+6. Либо установите пароль кнопкой "Задать пароль"
 
+ИЛИ через PowerShell (от администратора):
+# Установить пароль для пользователя
+$user = [ADSI]"WinNT://localhost/ИМЯ_ПОЛЬЗОВАТЕЛЯ,user"
+$user.SetPassword("НовыйПароль123!")
 
-# ============================================================================
-# ИАФ.5 — АВТОМАТИЧЕСКАЯ (все уровни)
-# ============================================================================
+# Заблокировать учётную запись
+Disable-LocalUser -Name "ИМЯ_ПОЛЬЗОВАТЕЛЯ"
 
-class IAF5Checker(BaseChecker):
-    def __init__(self):
-        super().__init__("ИАФ.5", "Защита обратной связи при вводе пароля", "medium", is_manual=False)
-        self.required_levels = [1, 2, 3, 4]
-    
-    def check(self) -> dict:
-        dont_display = get_registry_value(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "dontdisplaylastusername")
-        if dont_display == 1:
-            return self._get_result(True, "OK", "Имя последнего пользователя не отображается")
-        return self._get_result(True, "Предупреждение", "Рекомендуется скрыть имя последнего пользователя")
-
-
-# ============================================================================
-# ИАФ.6 — АВТОМАТИЧЕСКАЯ (все уровни)
-# ============================================================================
-
-class IAF6Checker(BaseChecker):
-    def __init__(self):
-        super().__init__("ИАФ.6", "Идентификация и аутентификация внешних пользователей", "high", is_manual=False)
-        self.required_levels = [1, 2, 3, 4]
+📊 ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ:
+- Регулярно проводите аудит учётных записей (раз в месяц)
+- Настройте политику блокировки неиспользуемых учётных записей через 90 дней
+- Используйте групповые политики для контроля паролей
+"""
     
     def check(self) -> dict:
         try:
@@ -158,12 +214,253 @@ class IAF6Checker(BaseChecker):
                         if word and word[0].isalnum() and len(word) > 1:
                             users.append(word.lower())
             system_accounts = ['administrator', 'guest', 'defaultaccount', 'wdagutilityaccount']
-            external = [u for u in users if u not in system_accounts]
-            if len(external) > 5:
-                return self._get_result(False, external, f"Обнаружено {len(external)} локальных учётных записей")
-            return self._get_result(True, external, f"Локальных учётных записей: {len(external)}")
+            without = []
+            for user in users:
+                if user.lower() in system_accounts:
+                    continue
+                check = subprocess.run(['net', 'user', user], capture_output=True, text=True, encoding='cp866', errors='replace')
+                if 'Пароль не задан' in check.stdout:
+                    without.append(user)
+            if without:
+                return self._get_result(False, without, f"Обнаружены учётные записи без пароля: {', '.join(without)}. Установите пароль или отключите учётные записи")
+            return self._get_result(True, "OK", "Все учётные записи защищены паролями")
+        except Exception as e:
+            return self._get_result(False, str(e), f"Ошибка проверки: {e}")
+
+
+# ============================================================================
+# ИАФ.4 — УПРАВЛЕНИЕ СРЕДСТВАМИ АУТЕНТИФИКАЦИИ (ПАРОЛЬНАЯ ПОЛИТИКА)
+# ============================================================================
+
+class IAF4Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("ИАФ.4", "Управление средствами аутентификации (парольная политика)", "critical", is_manual=False)
+        self.required_levels = [1, 2, 3, 4]
+        self.detailed_description = r"""
+📌 ЧТО ПРОВЕРЯЕТСЯ:
+Данная проверка контролирует параметры парольной политики Windows:
+1. Минимальную длину пароля
+2. Максимальный срок действия пароля
+3. Количество запоминаемых паролей (история)
+
+✅ ПОЧЕМУ ЭТО ВАЖНО:
+- Короткие пароли легко подбираются методами перебора (brute force)
+- Пароли, которые не меняются годами, могут быть скомпрометированы без ведома пользователя
+- Запоминание предыдущих паролей предотвращает повторное использование старых/скомпрометированных паролей
+
+📋 НОРМАТИВНОЕ ТРЕБОВАНИЕ (Приказ ФСТЭК №21 п. I, мера 4):
+Должна быть установлена парольная политика, включающая:
+- Минимальная длина пароля: не менее 8 символов (для УЗ-1,2,3,4)
+- Максимальный срок действия пароля: не более 90 дней
+- История паролей: не менее 5 предыдущих паролей
+- Сложность пароля: использование символов разных категорий (рекомендуется)
+
+🛠️ КАК НАСТРОИТЬ:
+
+Способ 1: Локальная групповая политика (gpedit.msc)
+1. Нажмите Win+R, введите gpedit.msc
+2. Перейдите: Конфигурация компьютера → Windows → Параметры безопасности → Политика учётных записей → Политика паролей
+3. Настройте следующие параметры:
+   - Минимальная длина пароля: 8 (или больше)
+   - Максимальный срок действия пароля: 90 дней
+   - Хранить историю паролей: 5
+   - Пароль должен отвечать требованиям сложности: Включён (рекомендуется)
+4. Нажмите "ОК"
+
+Способ 2: PowerShell (от администратора)
+# Установка политики паролей
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters" -Name "MinimumPasswordLength" -Value 8 -Type DWord
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters" -Name "MaximumPasswordAge" -Value 90 -Type DWord
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon\Parameters" -Name "PasswordHistorySize" -Value 5 -Type DWord
+
+📊 ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ:
+- Для административных учётных записей — длина пароля 12+ символов
+- Включите требование сложности пароля (заглавные, строчные, цифры, спецсимволы)
+- Настройте блокировку учётной записи после 5 неудачных попыток
+- Регулярно напоминайте пользователям о важности сложных паролей
+- Рассмотрите внедрение многофакторной аутентификации (MFA)
+"""
+    
+    def check(self) -> dict:
+        results = []
+        message_parts = []
+        
+        # Проверка минимальной длины пароля
+        min_len = get_registry_value(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\Network", "MinPasswordLength") or 0
+        min_len_ok = min_len >= 8
+        if min_len_ok:
+            results.append(("✅", f"Минимальная длина пароля: {min_len}", True))
+        else:
+            results.append(("❌", f"Минимальная длина пароля: {min_len} (требуется >=8)", False))
+            message_parts.append(f"Минимальная длина пароля = {min_len} (требуется >=8)")
+        
+        # Проверка максимального срока пароля
+        max_age = 999
+        try:
+            result = subprocess.run(['net', 'accounts'], capture_output=True, text=True, encoding='cp866', errors='replace')
+            for line in result.stdout.split('\n'):
+                if 'максимальный срок действия пароля' in line.lower():
+                    nums = re.findall(r'\d+', line)
+                    if nums:
+                        max_age = int(nums[0])
         except:
-            return self._get_result(False, "Ошибка", "Не удалось проверить учётные записи")
+            pass
+        max_age_ok = max_age <= 90
+        if max_age_ok:
+            results.append(("✅", f"Максимальный срок пароля: {max_age} дней", True))
+        else:
+            results.append(("❌", f"Максимальный срок пароля: {max_age} дней (требуется <=90)", False))
+            message_parts.append(f"Максимальный срок пароля = {max_age} дней (требуется <=90)")
+        
+        # Проверка истории паролей
+        history = get_registry_value(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon", "PasswordHistorySize") or 0
+        history_ok = history >= 5
+        if history_ok:
+            results.append(("✅", f"История паролей: {history}", True))
+        else:
+            results.append(("❌", f"История паролей: {history} (требуется >=5)", False))
+            message_parts.append(f"История паролей = {history} (требуется >=5)")
+        
+        status = all(r[2] for r in results)
+        
+        if not status:
+            message = "Парольная политика не соответствует требованиям: " + "; ".join(message_parts)
+        else:
+            message = "Парольная политика соответствует требованиям"
+        
+        return self._get_result(status, value="\n".join([f"{s} {t}" for s, t, _ in results]), message=message)
+
+
+# ============================================================================
+# ИАФ.5 — ЗАЩИТА ОБРАТНОЙ СВЯЗИ ПРИ ВВОДЕ ПАРОЛЯ
+# ============================================================================
+
+class IAF5Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("ИАФ.5", "Защита обратной связи при вводе пароля", "medium", is_manual=False)
+        self.required_levels = [1, 2, 3, 4]
+        self.detailed_description = r"""
+📌 ЧТО ПРОВЕРЯЕТСЯ:
+Проверяется, отображается ли имя последнего пользователя на экране входа в систему.
+
+✅ ПОЧЕМУ ЭТО ВАЖНО:
+- Отображение имени последнего пользователя даёт злоумышленнику половину информации для входа
+- Упрощает целенаправленные атаки на конкретных пользователей
+- Уменьшает время подбора пароля (нужно подобрать только пароль, а не пару логин+пароль)
+
+📋 НОРМАТИВНОЕ ТРЕБОВАНИЕ (Приказ ФСТЭК №21 п. I, мера 5):
+При вводе аутентификационной информации должна обеспечиваться защита обратной связи (не отображать вводимые символы и не показывать имя последнего пользователя).
+
+🛠️ КАК НАСТРОИТЬ:
+
+Способ 1: Локальная групповая политика (gpedit.msc)
+1. Нажмите Win+R, введите gpedit.msc
+2. Перейдите: Конфигурация компьютера → Windows → Параметры безопасности → Локальные политики → Параметры безопасности
+3. Найдите: "Интерактивный вход: Не отображать имя последнего пользователя"
+4. Установите значение "Включён"
+5. Нажмите "ОК"
+
+Способ 2: Реестр Windows
+1. Нажмите Win+R, введите regedit
+2. Перейдите к: HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System
+3. Создайте или измените параметр DWORD "dontdisplaylastusername"
+4. Установите значение 1
+5. Перезагрузите компьютер
+
+Способ 3: PowerShell (от администратора)
+Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "dontdisplaylastusername" -Value 1 -Type DWord
+
+📊 ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ:
+- Также рекомендуется включить маскировку вводимых символов (пароль отображается точками/звёздочками)
+- Используйте сочетание с блокировкой экрана при бездействии
+"""
+    
+    def check(self) -> dict:
+        dont_display = get_registry_value(r"SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System", "dontdisplaylastusername")
+        if dont_display == 1:
+            return self._get_result(True, "OK", "Имя последнего пользователя НЕ отображается (соответствует требованиям)")
+        else:
+            return self._get_result(False, "Требуется настройка", "Имя последнего пользователя отображается на экране входа. Отключите через gpedit.msc или реестр (dontdisplaylastusername=1)")
+
+
+# ============================================================================
+# ИАФ.6 — ИДЕНТИФИКАЦИЯ И АУТЕНТИФИКАЦИЯ ВНЕШНИХ ПОЛЬЗОВАТЕЛЕЙ
+# ============================================================================
+
+class IAF6Checker(BaseChecker):
+    def __init__(self):
+        super().__init__("ИАФ.6", "Идентификация и аутентификация внешних пользователей", "high", is_manual=False)
+        self.required_levels = [1, 2, 3, 4]
+        self.detailed_description = r"""
+📌 ЧТО ПРОВЕРЯЕТСЯ:
+Проверяется количество локальных учётных записей, созданных на компьютере (потенциально для внешних пользователей).
+
+✅ ПОЧЕМУ ЭТО ВАЖНО:
+- Каждая лишняя учётная запись увеличивает поверхность атаки
+- Внешние пользователи (подрядчики, временные сотрудники) должны иметь строго ограниченные права
+- Учётные записи внешних пользователей требуют особого контроля и своевременного отключения
+
+📋 НОРМАТИВНОЕ ТРЕБОВАНИЕ (Приказ ФСТЭК №21 п. I, мера 6):
+Должна быть реализована идентификация и аутентификация внешних пользователей (не являющихся работниками оператора), подключающихся к информационной системе по сетям связи.
+
+🛠️ КАК ИСПРАВИТЬ:
+
+1. Проверьте список локальных пользователей:
+   - Откройте lusrmgr.msc
+   - Перейдите в "Пользователи"
+   - Просмотрите всех пользователей
+
+2. Удалите неиспользуемые учётные записи:
+   - Выберите ненужную учётную запись
+   - Нажмите "Удалить"
+
+3. Отключите временные учётные записи:
+   - Дважды кликните по учётной записи
+   - Поставьте галочку "Отключить учётную запись"
+
+4. Для учётных записей внешних пользователей:
+   - Ограничьте время входа (в свойствах учётной записи)
+   - Установите дату истечения срока действия
+   - Настройте минимальные права доступа
+
+ИЛИ через PowerShell:
+# Получить список всех локальных пользователей
+Get-LocalUser
+
+# Отключить пользователя
+Disable-LocalUser -Name "ИМЯ_ПОЛЬЗОВАТЕЛЯ"
+
+# Удалить пользователя
+Remove-LocalUser -Name "ИМЯ_ПОЛЬЗОВАТЕЛЯ"
+
+📊 ДОПОЛНИТЕЛЬНЫЕ РЕКОМЕНДАЦИИ:
+- Для внешних пользователей используйте отдельную организационную единицу (OU) в домене
+- Настройте автоматическое отключение учётных записей через заданный срок
+- Ведите журнал всех подключений внешних пользователей
+- Применяйте принцип минимально необходимых привилегий (least privilege)
+"""
+    
+    def check(self) -> dict:
+        try:
+            result = subprocess.run(['net', 'user'], capture_output=True, text=True, encoding='cp866', errors='replace')
+            users = []
+            for line in result.stdout.split('\n'):
+                if line.strip() and not line.startswith('-') and not line.startswith('Команда'):
+                    for word in line.split():
+                        if word and word[0].isalnum() and len(word) > 1:
+                            users.append(word.lower())
+            # Системные учётные записи (не считаются внешними)
+            system_accounts = ['administrator', 'guest', 'defaultaccount', 'wdagutilityaccount']
+            external = [u for u in users if u not in system_accounts]
+            
+            if len(external) > 10:
+                return self._get_result(False, external, f"Обнаружено {len(external)} локальных учётных записей. Рекомендуется удалить неиспользуемые")
+            elif len(external) > 5:
+                return self._get_result(False, external, f"Обнаружено {len(external)} локальных учётных записей. Проверьте необходимость каждой")
+            else:
+                return self._get_result(True, external, f"Локальных учётных записей: {len(external)} (в пределах нормы)")
+        except Exception as e:
+            return self._get_result(False, "Ошибка", f"Не удалось проверить учётные записи: {e}")
 
 
 # ============================================================================
@@ -173,7 +470,7 @@ class IAF6Checker(BaseChecker):
 def get_iaf_checkers():
     return [
         IAF1Checker(),
-        IAF2Checker(),   # только для УЗ-1,2
+        IAF2Checker(),   # ручная, только для УЗ-1,2
         IAF3Checker(),
         IAF4Checker(),
         IAF5Checker(),

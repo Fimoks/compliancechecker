@@ -177,26 +177,196 @@ class ManualChecksDialog(QDialog):
 # ДИАЛОГ ДЛЯ ПОКАЗА ПОДРОБНОЙ ИНФОРМАЦИИ
 # ============================================================================
 
+# main_window.py - замените класс DetailsDialog
+
 class DetailsDialog(QDialog):
-    def __init__(self, title, details, parent=None):
+    def __init__(self, title, result, parent=None):
         super().__init__(parent)
-        self.setWindowTitle(f"Детали: {title}")
-        self.setMinimumSize(550, 450)
+        self.setWindowTitle(f"Подробнее: {title}")
+        self.setMinimumSize(650, 550)
         self.setModal(True)
         layout = QVBoxLayout(self)
         
-        text_edit = QTextEdit()
-        text_edit.setPlainText(details)
-        text_edit.setReadOnly(True)
-        text_edit.setFont(QFont("Consolas", 10))
-        layout.addWidget(text_edit)
+        # Создаём виджет с прокруткой
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll_widget = QWidget()
+        scroll_layout = QVBoxLayout(scroll_widget)
         
-        btn_box = QHBoxLayout()
+        # --- Статус проверки ---
+        status_text = "✅ ПРОЙДЕНО" if result.get('status') else "❌ НЕ ПРОЙДЕНО"
+        status_color = "#4caf50" if result.get('status') else "#f44336"
+        status_label = QLabel(f"<h2>{status_text}</h2>")
+        status_label.setStyleSheet(f"color: {status_color};")
+        status_label.setWordWrap(True)
+        scroll_layout.addWidget(status_label)
+        
+        # --- ID и название ---
+        id_label = QLabel(f"<b>ID проверки:</b> {result.get('id', '???')}")
+        id_label.setWordWrap(True)
+        scroll_layout.addWidget(id_label)
+        
+        name_label = QLabel(f"<b>Название:</b> {result.get('name', 'Неизвестно')}")
+        name_label.setWordWrap(True)
+        scroll_layout.addWidget(name_label)
+        
+        severity_label = QLabel(f"<b>Уровень критичности:</b> {result.get('severity', 'medium')}")
+        severity_label.setWordWrap(True)
+        scroll_layout.addWidget(severity_label)
+        
+        scroll_layout.addWidget(QLabel("-" * 60))
+        
+        # --- Текущее значение ---
+        value = result.get('value')
+        if value is not None and value != '' and value != []:
+            scroll_layout.addWidget(QLabel(f"<b>Текущее значение:</b>"))
+            value_label = QLabel(str(value))
+            value_label.setWordWrap(True)
+            value_label.setStyleSheet("background-color: #2b2b2b; padding: 5px; font-family: monospace;")
+            scroll_layout.addWidget(value_label)
+        
+        # --- Что должно быть (нормативное требование) ---
+        scroll_layout.addWidget(QLabel("-" * 60))
+        req_title = QLabel("<b>📋 Что должно быть:</b>")
+        req_title.setWordWrap(True)
+        scroll_layout.addWidget(req_title)
+        
+        req_text = self._get_requirement_text(result)
+        req_text.setWordWrap(True)
+        scroll_layout.addWidget(req_text)
+        
+        # --- Рекомендация по исправлению ---
+        if not result.get('status'):
+            scroll_layout.addWidget(QLabel("-" * 60))
+            fix_title = QLabel("<b>🛠️ Как исправить:</b>")
+            fix_title.setWordWrap(True)
+            scroll_layout.addWidget(fix_title)
+            
+            rec_label = QLabel(result.get('message', 'Рекомендация отсутствует'))
+            rec_label.setWordWrap(True)
+            rec_label.setStyleSheet("color: #ff9800; background-color: #2b2b2b; padding: 8px;")
+            scroll_layout.addWidget(rec_label)
+        
+        # --- Подробное описание меры ---
+        detailed = result.get('detailed_description', '')
+        if detailed:
+            scroll_layout.addWidget(QLabel("-" * 60))
+            desc_title = QLabel("<b>📖 Подробное описание:</b>")
+            desc_title.setWordWrap(True)
+            scroll_layout.addWidget(desc_title)
+            
+            desc_label = QLabel(detailed)
+            desc_label.setWordWrap(True)
+            desc_label.setStyleSheet("background-color: #1e1e1e; padding: 8px;")
+            scroll_layout.addWidget(desc_label)
+        
+        scroll_layout.addStretch()
+        scroll.setWidget(scroll_widget)
+        layout.addWidget(scroll)
+        
+        # Кнопка закрытия
+        btn_layout = QHBoxLayout()
         close_btn = QPushButton("Закрыть")
         close_btn.clicked.connect(self.accept)
-        btn_box.addStretch()
-        btn_box.addWidget(close_btn)
-        layout.addLayout(btn_box)
+        btn_layout.addStretch()
+        btn_layout.addWidget(close_btn)
+        layout.addLayout(btn_layout)
+    
+    def _get_requirement_text(self, result):
+        """Возвращает текст нормативного требования для данной проверки"""
+        rule_id = result.get('id', '')
+        
+        requirements = {
+            # ========== КАТЕГОРИЯ I. ИАФ - Идентификация и аутентификация ==========
+            "ИАФ.1": "Каждый пользователь должен быть идентифицирован и аутентифицирован перед получением доступа к информационной системе. Неиспользуемые учётные записи должны быть отключены. Пользователи не должны обладать избыточными привилегиями.",
+            "ИАФ.2": "Должна быть реализована идентификация и аутентификация устройств, подключаемых к информационной системе, с использованием сертификатов, 802.1X или иных методов.",
+            "ИАФ.3": "Все идентификаторы пользователей должны быть защищены средствами аутентификации. Неиспользуемые идентификаторы должны блокироваться.",
+            "ИАФ.4": "Должна быть установлена парольная политика: минимальная длина пароля не менее 8 символов, срок действия не более 90 дней, история паролей не менее 5 предыдущих, сложность пароля (заглавные, строчные, цифры, спецсимволы).",
+            "ИАФ.5": "При вводе аутентификационной информации должна обеспечиваться защита обратной связи (не отображать вводимые символы и не показывать имя последнего пользователя).",
+            "ИАФ.6": "Должна быть реализована идентификация и аутентификация внешних пользователей (не являющихся работниками оператора), подключающихся к информационной системе по сетям связи.",
+            
+            # ========== КАТЕГОРИЯ II. УПД - Управление доступом ==========
+            "УПД.1": "Доступ пользователей к объектам доступа должен ограничиваться в соответствии с должностными обязанностями (принцип минимально необходимых привилегий).",
+            "УПД.2": "Должен использоваться дискреционный или мандатный метод управления доступом. Права доступа должны назначаться только на необходимый минимум.",
+            "УПД.3": "Должен осуществляться контроль информационных потоков между сегментами сети, в том числе с помощью межсетевых экранов.",
+            "УПД.4": "Должна быть реализована защита удалённого доступа с использованием защищённых протоколов (RDP с шифрованием, VPN).",
+            "УПД.5": "Должно быть настроено автоматическое блокирование сеанса доступа после установленного времени бездействия пользователя (не более 15 минут).",
+            
+            # ========== КАТЕГОРИЯ III. ОПС - Ограничение программной среды ==========
+            "ОПС.1": "Должно быть реализовано ограничение программной среды — запуск только разрешённого программного обеспечения (AppLocker, SRP).",
+            "ОПС.2": "Установка программного обеспечения должна быть ограничена для обычных пользователей, разрешена только администраторам.",
+            
+            # ========== КАТЕГОРИЯ IV. ЗНИ - Защита машинных носителей ==========
+            "ЗНИ.1": "Должен вестись учёт машинных носителей персональных данных (журнал учёта съёмных носителей).",
+            "ЗНИ.2": "Подключение съёмных носителей должно контролироваться и ограничиваться (запрет USB, контроль портов).",
+            "ЗНИ.3": "Должно быть реализовано уничтожение (стирание) или обезличивание персональных данных на машинных носителях при их утилизации.",
+            
+            # ========== КАТЕГОРИЯ V. РСБ - Регистрация событий безопасности ==========
+            "РСБ.1": "Должна вестись регистрация событий безопасности: вход/выход из системы, доступ к персональным данным, изменение прав доступа.",
+            "РСБ.2": "Журналы событий безопасности должны защищаться от чтения, модификации и удаления, а также храниться не менее 1 года.",
+            "РСБ.3": "Должна быть обеспечена синхронизация системного времени (NTP) на всех компонентах информационной системы.",
+            
+            # ========== КАТЕГОРИЯ VI. АВЗ - Антивирусная защита ==========
+            "АВЗ.1": "На всех рабочих станциях и серверах должно быть установлено и активно антивирусное программное обеспечение.",
+            "АВЗ.2": "Антивирусные базы должны регулярно обновляться (не реже 1 раза в сутки).",
+            "АВЗ.3": "Должно быть настроено регулярное сканирование файловой системы (не реже 1 раза в неделю).",
+            
+            # ========== КАТЕГОРИЯ VII. СОВ - Обнаружение вторжений ==========
+            "СОВ.1": "Должны применяться средства обнаружения вторжений (IDS/IPS) для выявления компьютерных атак.",
+            "СОВ.2": "Базы решающих правил систем обнаружения вторжений должны регулярно обновляться.",
+            
+            # ========== КАТЕГОРИЯ VIII. АНЗ - Контроль защищённости ==========
+            "АНЗ.1": "Должен осуществляться контроль установки обновлений операционной системы и прикладного ПО.",
+            "АНЗ.2": "Должен проводиться анализ уязвимостей информационной системы (не реже 1 раза в год).",
+            "АНЗ.3": "Должен осуществляться контроль состава технических средств и установленного программного обеспечения.",
+            
+            # ========== КАТЕГОРИЯ IX. ОЦЛ - Обеспечение целостности ==========
+            "ОЦЛ.1": "Должен осуществляться контроль целостности программного обеспечения и персональных данных.",
+            "ОЦЛ.2": "Должна быть обеспечена возможность восстановления программного обеспечения при сбоях.",
+            "ОЦЛ.3": "Должен осуществляться контроль содержания информации, передаваемой из информационной системы.",
+            
+            # ========== КАТЕГОРИЯ X. ОДТ - Обеспечение доступности ==========
+            "ОДТ.1": "Должно осуществляться резервное копирование персональных данных (согласно установленному регламенту).",
+            "ОДТ.2": "Должна быть обеспечена возможность восстановления персональных данных из резервных копий.",
+            "ОДТ.3": "Должно быть обеспечено резервирование технических средств и каналов связи для критических компонентов.",
+            
+            # ========== КАТЕГОРИЯ XI. ЗСВ - Защита среды виртуализации ==========
+            "ЗСВ.1": "Должна быть обеспечена изоляция виртуальных машин друг от друга и от гипервизора.",
+            "ЗСВ.2": "В среде виртуализации должна быть реализована идентификация и аутентификация, управление доступом.",
+            
+            # ========== КАТЕГОРИЯ XII. ЗТС - Защита технических средств ==========
+            "ЗТС.1": "Должен контролироваться физический доступ к техническим средствам (ограничение доступа в помещения).",
+            "ЗТС.2": "Устройства вывода информации (экраны, принтеры) должны быть размещены исключая несанкционированный просмотр.",
+            "ЗТС.3": "Должна быть обеспечена защита технических средств от внешних воздействий (ИБП, климат-контроль).",
+            
+            # ========== КАТЕГОРИЯ XIII. ЗИС - Защита ИС и связи ==========
+            "ЗИС.1": "Должна обеспечиваться защита информации при её передаче по сетям связи (шифрование, VPN).",
+            "ЗИС.2": "Беспроводные соединения должны быть защищены (WPA2/WPA3, корпоративная аутентификация).",
+            "ЗИС.3": "Должна быть реализована защита сетевых соединений (межсетевой экран, файрвол).",
+            "ЗИС.4": "Информационная система должна быть сегментирована для ограничения распространения атак.",
+            
+            # ========== КАТЕГОРИЯ XIV. ИНЦ - Выявление инцидентов ==========
+            "ИНЦ.1": "Должны выявляться, идентифицироваться и регистрироваться компьютерные инциденты.",
+            "ИНЦ.2": "Должен быть разработан и утверждён план реагирования на компьютерные инциденты.",
+            "ИНЦ.3": "Должен проводиться анализ инцидентов и принятие мер по предотвращению повторного возникновения.",
+            
+            # ========== КАТЕГОРИЯ XV. УКФ - Управление конфигурацией ==========
+            "УКФ.1": "Должно осуществляться управление изменениями конфигурации информационной системы.",
+            "УКФ.2": "Изменения конфигурации должны согласовываться и документироваться.",
+            "УКФ.3": "Должен осуществляться контроль версий программного обеспечения и его настроек.",
+        }
+        
+        # Ищем требование по началу ID (например, "ИАФ.1" или "ИАФ")
+        for key, text in requirements.items():
+            if rule_id.startswith(key) or rule_id == key:
+                label = QLabel(text + "\n\n📄 Нормативная база: Приказ ФСТЭК России №21")
+                label.setWordWrap(True)
+                return label
+        
+        # Если не найдено — общее требование
+        label = QLabel("Требования к данной мере установлены Приказом ФСТЭК России №21. Обратитесь к документации по информационной безопасности организации.")
+        label.setWordWrap(True)
+        return label
 
 
 # ============================================================================
@@ -249,12 +419,12 @@ class ComplianceCheckerWindow(QMainWindow):
         self._apply_styles()
 
     def _set_status_color(self, item, status):
-        """Устанавливает цвет фона только для столбца 'Статус'"""
+        """Устанавливает цвет фона для столбца 'Статус' (индекс 2 после объединения)"""
         if status:
             color = QColor(76, 175, 80, 50)  # пастельно-зеленый
         else:
             color = QColor(244, 67, 54, 50)  # пастельно-красный
-        item.setBackground(3, color)  # столбец 3 - это "Статус" (после перемещения)
+        item.setBackground(2, color)  # столбец 2 - это "Статус"
     
     def _setup_ui(self):
         central = QWidget()
@@ -341,7 +511,7 @@ class ComplianceCheckerWindow(QMainWindow):
         self.summary_layout.addWidget(self.summary_stacked)
         self.tab_widget.addTab(self.summary_widget, "📊 Сводка")
         
-        # --- Вкладка 2: Результаты ---
+        # --- Вкладка 2: Результаты (объединённые столбцы) ---
         self.results_tree = QTreeWidget()
         self.results_tree.setWordWrap(True)
         self.results_tree.setTextElideMode(Qt.TextElideMode.ElideNone)
@@ -349,22 +519,21 @@ class ComplianceCheckerWindow(QMainWindow):
         self.results_tree.setUniformRowHeights(False)
         self.results_tree.setIndentation(0)
         self.results_tree.setRootIsDecorated(False)
+        self.results_tree.setStyleSheet("QTreeWidget::item { white-space: normal; }")
+        
+        # ТРИ столбца: Проверка, Пояснение, Статус
+        self.results_tree.setHeaderLabels(["Проверка", "Пояснение", "Статус"])
+        
+        # Начальная ширина столбцов
+        self.results_tree.setColumnWidth(0, 350)  # Проверка
+        self.results_tree.setColumnWidth(1, 500)  # Пояснение
+        self.results_tree.setColumnWidth(2, 120)  # Статус
+        
         self.results_tree.header().setStretchLastSection(True)
         self.results_tree.header().setMinimumSectionSize(0)
-        self.results_tree.setStyleSheet("QTreeWidget::item { white-space: normal; }")
         self.results_tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
-        self.results_tree.header().setSectionResizeMode(1, QHeaderView.Interactive)
+        self.results_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
         self.results_tree.header().setSectionResizeMode(2, QHeaderView.Interactive)
-        self.results_tree.header().setSectionResizeMode(3, QHeaderView.Stretch)
-        
-        # Устанавливаем заголовки столбцов в новом порядке: Проверка, Значение, Рекомендация, Статус
-        self.results_tree.setHeaderLabels(["Проверка", "Значение", "Рекомендация", "Статус"])
-        
-        # Устанавливаем начальную ширину столбцов (в новом порядке)
-        self.results_tree.setColumnWidth(0, 350)  # Проверка
-        self.results_tree.setColumnWidth(1, 200)  # Значение
-        self.results_tree.setColumnWidth(2, 300)  # Рекомендация
-        self.results_tree.setColumnWidth(3, 100)  # Статус
         
         # Выравниваем заголовки по центру
         self.results_tree.header().setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -397,8 +566,8 @@ class ComplianceCheckerWindow(QMainWindow):
             total_width = self.width() - 50
             if total_width < 200:
                 total_width = 1000
-        # Пропорции для нового порядка столбцов: [Проверка, Значение, Рекомендация, Статус]
-        widths = [0.35, 0.20, 0.30, 0.15]  # 35%, 20%, 30%, 15%
+        # Пропорции для трёх столбцов: [Проверка, Пояснение, Статус]
+        widths = [0.35, 0.50, 0.15]  # 35%, 50%, 15%
         for col, ratio in enumerate(widths):
             self.results_tree.setColumnWidth(col, int(total_width * ratio))
         self.results_tree.header().updateGeometry()
@@ -727,50 +896,64 @@ class ComplianceCheckerWindow(QMainWindow):
     def _add_result_item(self, result, add_to_list=False):
         if add_to_list:
             self.results.append(result)
-        status_text = "Пройдено" if result['status'] else "Не пройдено"
+        
+        status_text = "✅ Пройдено" if result['status'] else "❌ Не пройдено"
+        
+        # Формируем пояснение (объединяем значение и рекомендацию)
+        explanation = ""
+        value = result.get('value')
+        
+        # Добавляем значение, если оно есть и не пустое
+        if value is not None and value != '' and value != []:
+            explanation += f"Значение: {value}\n"
+        
+        # Добавляем рекомендацию
+        message = result.get('message', '')
+        if message and message != "Требуется настройка":
+            explanation += message
+        elif not result['status'] and not message:
+            explanation += "Требуется настройка. Обратитесь к документации по безопасности."
+        elif result['status'] and not message:
+            explanation += "Проверка пройдена успешно."
+        
+        # Убираем лишние переносы в конце
+        explanation = explanation.strip()
+        
         item = QTreeWidgetItem()
         item.setText(0, f"{result.get('id', '???')}: {result.get('name', 'Неизвестно')}")
-        item.setText(1, str(result.get('value', '')))  # Значение
-        rec = result.get('message', '')
-        if not rec and not result['status']:
-            rec = "Требуется настройка"
-        item.setText(2, rec)  # Рекомендация
-        item.setText(3, status_text)  # Статус
-        self.results_tree.addTopLevelItem(item)
+        item.setText(1, explanation)
+        item.setText(2, status_text)
         
         # Выравниваем текст в столбце "Статус" по центру
-        item.setTextAlignment(3, Qt.AlignmentFlag.AlignCenter)
+        item.setTextAlignment(2, Qt.AlignmentFlag.AlignCenter)
         
         self._set_status_color(item, result['status'])
+        self.results_tree.addTopLevelItem(item)
         self.results_tree.scheduleDelayedItemsLayout()
         self._log(f"{result.get('id', '???')}: {'✓' if result['status'] else '✗'} - {result.get('name', 'Неизвестно')}")
 
     def _on_item_double_clicked(self, item, column):
         # Пропускаем заголовки групп
-        if item.text(3) == "" and item.text(1) == "" and item.text(2) == "":
+        if item.text(2) == "" and item.text(1) == "":
             return
         item_text = item.text(0)
         if ":" in item_text:
             check_id = item_text.split(":")[0].strip()
         else:
             check_id = item_text
+        
+        # Ищем результат
         result = None
         for r in self.results:
             if r.get('id') == check_id:
                 result = r
                 break
+        
         if not result:
             return
-        details = f"""ID: {result.get('id', '???')}
-Название: {result.get('name', 'Неизвестно')}
-Статус: {'Пройдено' if result.get('status') else 'Не пройдено'}
-Значение:
-{result.get('value', '')}
-
-Рекомендация:
-{result.get('message', '')}
-"""
-        dialog = DetailsDialog(check_id, details, self)
+        
+        # Открываем улучшенный диалог
+        dialog = DetailsDialog(check_id, result, self)
         dialog.exec()
 
     def _update_progress(self, current, total):
